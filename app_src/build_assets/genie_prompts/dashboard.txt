@@ -1,0 +1,17 @@
+Acme Corp request {{REF}} ({{PRODUCT}}), build step: create the dashboard. Use @aibi-dashboard-standards.
+Work ONLY with the objects listed here. Do not modify any other dashboard, table or view. Do not ask questions.
+
+Create a NEW AI/BI (Lakeview) dashboard, saved under {{FOLDER}}:
+- Title: {{TITLE}}
+- Warehouse: {{WAREHOUSE_ID}}
+- Data: metric views {{DATA_SOURCES}}. Every dataset reads one of these metric views with MEASURE(); do not read gold or silver tables directly.
+- Use these widget queries, one dataset per widget. Each was validated on the warehouse before this step, so copy the SQL exactly: do not change the measures, filters or dates. You choose only the presentation (chart type, titles, formatting):
+{{PAGES}}
+- Filters: {{FILTERS}}
+- Refresh: {{REFRESH}}. Describe the schedule in the dashboard notes only; do not create a schedule.
+- No customer names on any page or in any dataset. Customer-level columns are not allowed.
+- Check before you finish: every widget query must return rows.
+
+- Share it: after creating the dashboard, give the service principal with application id {{APP_SP}} CAN_MANAGE on it (PATCH /api/2.0/permissions/dashboards/<dashboard_id> with service_principal_name {{APP_SP}}). The app uses this identity to check and promote the dashboard.
+
+Finish with one line: DASHBOARD_OK <dashboard_id>, or DASHBOARD_FAILED <reason>.

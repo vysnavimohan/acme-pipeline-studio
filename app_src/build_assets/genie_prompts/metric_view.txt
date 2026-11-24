@@ -1,0 +1,7 @@
+Acme Corp request {{REF}} ({{PRODUCT}}), build step: create the governed metric view {{MV_NAME}}. Use @metric-view-author and @governance-by-construction.
+Work ONLY in catalog {{CATALOG}}, schema {{DEV_SCHEMA}}. Do not modify any other object. Do not ask questions. Run the SQL below exactly as given on a SQL warehouse ({{WAREHOUSE_ID}} if you need one).
+
+{{METRIC_VIEW_SQL}}
+
+Then verify it: run {{VERIFY_SQL}} and confirm it returns one row. The view must expose these measures: {{MEASURES}}.
+Finish with one line: METRIC_VIEW_OK {{MV_NAME}}, or METRIC_VIEW_FAILED <reason>.

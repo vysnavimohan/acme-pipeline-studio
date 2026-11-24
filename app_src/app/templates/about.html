@@ -1,0 +1,129 @@
+{% extends "_base.html" %}
+{% block title %}About · {{ brand.name if brand else 'Acme Corp Pipeline Studio' }}{% endblock %}
+
+{% block content %}
+<div x-data="{showReset: false, busy: false, result: null}" class="space-y-5 max-w-3xl">
+
+  <h1 class="text-2xl font-semibold text-slate-900">About this app</h1>
+
+  <div class="card space-y-3 text-sm leading-relaxed text-slate-700">
+    <p>
+      <strong>{{ brand.name if brand else 'Acme Corp Pipeline Studio' }}</strong> is a Databricks App that
+      takes a data request from an analyst to a governed, deployed data product. The analyst describes
+      what they need. The app runs the human steps (the grill, the reuse check, data quality, plan
+      approval and PR review). <strong>Genie Code builds</strong> the assets, started from a Lakeflow Job.
+      Then the same reviewed artefacts are promoted from dev to staging to prod.
+    </p>
+    <p>
+      The worked example is request <strong>REQ-0142</strong>. An FP&amp;A business analyst at Acme Corp
+      asks for a <strong>Genie Agent "Margin &amp; Cash"</strong> that answers where margin is leaking and
+      what cash is doing, and a <strong>dashboard "Margin &amp; Cash Tracker"</strong> to track both weekly.
+      Both sit on governed metric views, not on report calculations.
+    </p>
+  </div>
+
+  <div class="card space-y-3 text-sm text-slate-700">
+    <h3>The journey, screen by screen</h3>
+    <ol class="list-decimal pl-6 space-y-1">
+      <li><strong>Home.</strong> The analyst's starting point and the recent requests.</li>
+      <li><strong>The ask (grill).</strong> The intake agent pins down who asks the agent, the sample questions, the decisions they drive and the dashboard cadence. It ends with the spec JSON.</li>
+      <li><strong>What already exists (reuse).</strong> Each need is matched against real catalog assets and marked REUSE, EXTEND or GAP, with a coverage %.</li>
+      <li><strong>Fill the gap with a metric view.</strong> The margin-leakage gap becomes a metric view (YAML) that the agent and the dashboard share.</li>
+      <li><strong>Data quality.</strong> Existing rules from the rules repo are listed first. Disabling one needs a reason. Gap rules are proposed, rules on missing columns are rejected, and the review is saved.</li>
+      <li><strong>Agent and dashboard design.</strong> Two short sub-grills: sample questions and benchmark answers, instructions and access for the Genie Agent; pages, KPIs, filters and refresh for the dashboard. PII is refused on shared pages.</li>
+      <li><strong>Plan and approve (human gate 1).</strong> The plan lists each step with its skills. Approve starts the Genie Code job and shows the job run ID.</li>
+      <li><strong>Build, live.</strong> The tracker shows progress per step as Genie Code works: the metric view, the Genie Agent, the dashboard. Each asset gets a link.</li>
+      <li><strong>PR and AI review (human gate 2).</strong> The PR carries the generated definitions (metric view YAML, Genie Agent config, dashboard JSON). The AI reviewer comments on real gaps. A person approves or rejects.</li>
+      <li><strong>Promote.</strong> Approve moves the artefacts from staging to prod and lists the release on Prod Release.</li>
+      <li><strong>Use it.</strong> The analyst asks the Genie Agent the margin and cash questions, and opens the dashboard. The benchmark answers and the dashboard should show the same numbers.</li>
+    </ol>
+    <p class="text-xs text-slate-500">Screens 2 to 7 run on the New request page. Screens 8 and 9 run on the Tracker. Screen 10 is Prod Release. Screen 11 happens in the Genie Agent and the dashboard, outside this app.</p>
+  </div>
+
+  <div class="card space-y-3 text-sm text-slate-700">
+    <h3>The agent roles</h3>
+    <p>Each agent runs on a prompt you can review and edit on Agent config. The roles that apply to a request:</p>
+    <ul class="list-disc pl-5 space-y-1">
+      <li><strong>Spec Critic</strong> challenges the spec for ambiguities before anything is built.</li>
+      <li><strong>Source Profiler</strong> reads the source schema and row counts and notes quirks.</li>
+      <li><strong>Pipeline Generator</strong> writes the Lakeflow and SDP code and the Unity Catalog metadata.</li>
+      <li><strong>Standards Validator</strong> checks the artefacts against engineering standards (PII tags, comments, expectations).</li>
+      <li><strong>Test Generator</strong> adds business-rule checks on top of the declared rules.</li>
+      <li><strong>PR Reviewer</strong> writes the review comment on the PR, which a person then approves or rejects.</li>
+      <li><strong>Deploy Agent</strong> holds the standard operating procedure for the dev and prod deploys.</li>
+    </ul>
+    <p class="text-xs text-slate-500">The App Generator and App Standards Validator are still configurable, but they are not on the Margin &amp; Cash path.</p>
+  </div>
+
+  <div class="card space-y-3 text-sm text-slate-700">
+    <h3>How Genie Code builds</h3>
+    <p>
+      The build is not run by the app's own agents. The app starts a Lakeflow Job (<code>acme-studio-genie-code</code>)
+      with a Genie Code task. The task's prompt names the assets to build and @-mentions the skills
+      (for example <code>metric-view-author</code>, <code>genie-agent-author</code> and
+      <code>aibi-dashboard-standards</code>). The app then polls the run, reads the Genie Code response
+      and records the job run ID against the request, so every build step links to the run that made it.
+    </p>
+    <p>
+      <strong>Status:</strong> the job exists in the workspace, but its Genie Code task is still being
+      rehearsed, so it is not yet the live build path. Until it is, a build step that cannot run through
+      Genie Code is created through the Genie and Lakeview APIs from the same reviewed config. That step is
+      labelled as the fallback on the Tracker.
+    </p>
+  </div>
+
+  <div class="card space-y-3 text-sm text-slate-700">
+    <h3>Two human gates</h3>
+    <ul class="list-disc pl-5 space-y-1">
+      <li><strong>Gate 1: approve the plan.</strong> Nothing is built until a person approves the plan.</li>
+      <li><strong>Gate 2: approve the PR.</strong> Nothing is promoted until a person approves the PR, after the AI review.</li>
+    </ul>
+    <p>Promotion from staging to prod is a release step on Prod Release.</p>
+  </div>
+
+  <div class="card space-y-3 text-sm text-slate-700">
+    <h3>What is real and what is seeded</h3>
+    <ul class="list-disc pl-5 space-y-1">
+      <li><strong>Real.</strong> The Acme Corp ERP extracts are files in the <code>raw_erp</code> volume and feed the medallion in <code>vmohan_demo_catalog.cfo_workbench</code>. The reuse matches are real catalog asset IDs. The control tables are in <code>vmohan_demo_catalog.studio_control</code>. The assets a build creates (metric view, Genie Agent, dashboard) are real workspace objects.</li>
+      <li><strong>Scripted.</strong> The reuse coverage % is matched against the catalog. It is not a live similarity score.</li>
+      <li><strong>Estimated · demo.</strong> The Cost Controls numbers are estimates for the demo, not billing records. The system billing tables settle later.</li>
+      <li><strong>Demo data.</strong> The ERP data is synthetic. The example Prod Release comes from a seeded fixture.</li>
+    </ul>
+  </div>
+
+  <div class="card space-y-3 text-sm border-2 border-amber-200 bg-amber-50">
+    <h3 class="text-amber-900">Demo reset</h3>
+    <p class="text-amber-900">
+      Clears the requests, request events and releases in the control schema, closes any open PRs in the
+      pipelines repo (when a GitHub token is set), then re-seeds the example Prod Release. It
+      <strong>does not</strong> drop the build assets (metric views, Genie Agents, dashboards) or
+      already-merged PRs, and it does not touch the ERP source data.
+    </p>
+    <div class="flex items-center gap-3">
+      <button class="btn btn-danger" @click="showReset = true" x-show="!showReset">Reset demo state…</button>
+
+      <template x-if="showReset">
+        <div class="flex items-center gap-3">
+          <span class="text-sm font-semibold text-amber-900">Are you sure?</span>
+          <button class="btn btn-danger" :disabled="busy" @click="
+            busy = true;
+            fetch('/api/admin/reset', {method:'POST'})
+              .then(r => r.json()).then(d => { result = d; busy = false; showReset = false; })
+              .catch(e => { result = {error: e.message}; busy = false; });
+          " x-text="busy ? 'Resetting…' : 'Yes, wipe state'"></button>
+          <button class="btn btn-ghost" @click="showReset = false">Cancel</button>
+        </div>
+      </template>
+
+      <span x-show="result" class="text-xs font-mono ml-2" x-text="result && JSON.stringify(result)"></span>
+    </div>
+  </div>
+
+  <div class="card space-y-2 text-sm">
+    <h3>Links</h3>
+    <ul class="list-disc pl-5 space-y-1">
+      <li>Pipelines repo: <a class="text-amber-600 hover:underline" target="_blank" href="https://github.com/{{ github_repo }}">github.com/{{ github_repo }}</a></li>
+    </ul>
+  </div>
+</div>
+{% endblock %}

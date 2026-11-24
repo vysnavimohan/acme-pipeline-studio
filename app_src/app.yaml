@@ -1,0 +1,73 @@
+command:
+  - uvicorn
+  - app.app:app
+  - --host
+  - 0.0.0.0
+  - --port
+  - "8000"
+  - --no-access-log
+
+env:
+  # Branding: Acme Corp on the Databricks palette (colours = app/branding.py defaults).
+  - name: OPS_BRAND_NAME
+    value: "Acme Corp Pipeline Studio"
+  - name: OPS_BRAND_SHORT
+    value: "Pipeline Studio"
+  - name: OPS_COMPANY_NAME
+    value: "Acme Corp"
+  - name: OPS_LAKEBASE_ENABLED
+    value: "0"
+  # PR review happens inside the app (mock mode); this is only a display label.
+  - name: GITHUB_PIPELINES_REPO
+    value: acme-corp/finance-data-products
+  # Control tables + promotion targets (all in the personal demo catalog).
+  - name: OPS_CONTROL_CATALOG
+    value: vmohan_demo_catalog
+  - name: OPS_CONTROL_SCHEMA
+    value: studio_control
+  - name: DEV_CATALOG
+    value: vmohan_demo_catalog
+  - name: DEV_SILVER_SCHEMA
+    value: studio_dev
+  - name: DEV_BRONZE_SCHEMA
+    value: studio_dev
+  - name: DEV_GOLD_SCHEMA
+    value: studio_dev
+  - name: STAGE_CATALOG
+    value: vmohan_demo_catalog
+  - name: STAGE_SILVER_SCHEMA
+    value: studio_stage
+  - name: STAGE_BRONZE_SCHEMA
+    value: studio_stage
+  - name: PROD_CATALOG
+    value: vmohan_demo_catalog
+  - name: PROD_SILVER_SCHEMA
+    value: studio_prod
+  - name: PROD_BRONZE_SCHEMA
+    value: studio_prod
+  # Source data for the Acme Corp journey (synthetic ERP, already built).
+  - name: OPS_ACME_SOURCE_SCHEMA
+    value: cfo_workbench
+  # Genie Code build engine (Lakeflow Job with a Genie Code task; prompt parameter).
+  - name: OPS_GENIE_CODE_JOB_ID
+    value: "28927436286061"
+  # Genie Code (runs as the job owner) saves dev dashboards here; the app itself (prod copy,
+  # fallbacks) saves into its own service-principal home folder.
+  - name: OPS_DASHBOARD_FOLDER
+    value: "/Workspace/Users/vaishnavi.mohan@databricks.com/acme_studio"
+  - name: OPS_APP_DASHBOARD_FOLDER
+    value: "/Workspace/Users/709e095d-db7e-4d9f-a243-a51ccbcb5764"
+  - name: DATABRICKS_WAREHOUSE_ID
+    value: "7464666eb7d50c27"
+  - name: DATABRICKS_WAREHOUSE_HTTP_PATH
+    valueFrom: warehouse
+  - name: MLFLOW_EXPERIMENT_PATH
+    value: "/Shared/acme-pipeline-studio-agent"
+  - name: OPS_LLM_ENDPOINT
+    value: "databricks-claude-sonnet-4-6"
+  - name: OPS_CONFLUENCE_ENABLED
+    value: "0"
+  - name: OPS_PR_MODE
+    value: "mock"
+  - name: OPS_LANDING_VOLUME
+    value: "vmohan_demo_catalog.cfo_workbench.raw_erp"

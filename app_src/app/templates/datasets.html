@@ -1,0 +1,188 @@
+{% extends "_base.html" %}
+{% block title %}Datasets · Landing Zone · {{ brand.name if brand else 'Databricks Pipeline Studio' }}{% endblock %}
+
+{% block head_extra %}
+<style>
+  .ds-card { border: 1px solid var(--border); border-radius: 0.7rem; background: #fff; padding: 0.9rem 1rem; }
+  .ds-meta { font-size: 0.72rem; color: var(--ink-dim); }
+  .col-table { width: 100%; border-collapse: collapse; font-size: 0.76rem; }
+  .col-table th { text-align: left; color: var(--ink-dim); font-weight: 600; padding: 0.25rem 0.5rem;
+                  border-bottom: 1px solid var(--border); text-transform: uppercase; font-size: 0.64rem; letter-spacing: .04em; }
+  .col-table td { padding: 0.22rem 0.5rem; border-bottom: 1px solid var(--surface-alt); font-family: ui-monospace, monospace; }
+  .tag { font-size: 0.62rem; font-weight: 700; padding: .06rem .4rem; border-radius: 999px; }
+  .tag-json { background: #FFF3C2; color: #7A5C00; }
+  .tag-ts { background: var(--dbx-mist); color: #1B3139; }
+  .note { font-size: 0.72rem; color: var(--ink-dim); background: var(--surface-alt); border-radius: .4rem; padding: .4rem .6rem; }
+  .drop { border: 1.5px dashed var(--border-strong); border-radius: .6rem; padding: 1rem; text-align: center; }
+  .drop.drag { border-color: var(--dbx-navy); background: var(--dbx-mist); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div x-data="datasetsPage()" x-init="init()" class="space-y-4">
+
+  <div class="flex items-end justify-between gap-4 flex-wrap">
+    <div>
+      <h1 class="text-2xl font-semibold text-slate-900">Landing zone · Datasets</h1>
+      <p class="text-sm text-slate-600 max-w-3xl">
+        The landing zone is a Unity Catalog <strong>Volume</strong> that simulates the
+        Databricks ADLS2 container. Vendor extracts (CSV/DAT) arrive as files in per-dataset
+        folders; the Studio <strong>profiles</strong> each file and ingests it to Bronze with
+        <strong>Auto Loader</strong>. Onboard a new dataset below, then raise a pipeline request against it.
+      </p>
+      <p class="ds-meta mt-1">Volume: <code x-text="volume"></code></p>
+    </div>
+    <button class="btn btn-ghost" @click="load()">Refresh</button>
+  </div>
+
+  <div class="grid grid-cols-12 gap-4">
+
+    <!-- LEFT: onboard a new dataset -->
+    <aside class="col-span-12 lg:col-span-4 space-y-3">
+      <div class="card">
+        <h3>Onboard a dataset</h3>
+        <p class="text-[12px] text-slate-600 mb-2">
+          Drop a vendor file (e.g. an ERP <code>.csv</code> extract) and give the dataset a name.
+          It lands in <code>&lt;volume&gt;/&lt;dataset&gt;/</code> and is auto-profiled.
+        </p>
+        <label class="field">Dataset name</label>
+        <input class="tf text-[13px] mb-2" x-model="newName" placeholder="e.g. cust_comm_hist">
+        <div class="drop" :class="dragging ? 'drag' : ''"
+             @dragover.prevent="dragging=true" @dragleave.prevent="dragging=false"
+             @drop.prevent="onDrop($event)">
+          <input type="file" id="ds-file" class="hidden" @change="picked($event)">
+          <div class="text-[13px] text-slate-600">
+            <span x-show="!chosen">Drag a file here, or
+              <label for="ds-file" class="underline cursor-pointer" style="color:var(--dbx-navy-2);">browse</label>.
+            </span>
+            <span x-show="chosen" x-text="'Selected: ' + chosen.name"></span>
+          </div>
+        </div>
+        <button class="btn btn-primary mt-2 w-full" :disabled="!chosen || !newName || uploading"
+                @click="upload()" x-text="uploading ? 'Uploading…' : 'Upload & profile'"></button>
+        <div x-show="uploadMsg" class="text-[12px] mt-2" :class="uploadOk ? 'text-emerald-700' : 'text-rose-700'"
+             x-text="uploadMsg"></div>
+      </div>
+    </aside>
+
+    <!-- RIGHT: datasets list -->
+    <section class="col-span-12 lg:col-span-8 space-y-3">
+      <div class="flex items-center justify-between">
+        <h3 class="mb-0">Datasets in the landing zone</h3>
+        <span class="ds-meta" x-text="datasets.length + ' dataset(s)'"></span>
+      </div>
+      <div x-show="loading" class="card text-sm text-slate-500">Loading + profiling…</div>
+      <div x-show="!loading && !datasets.length" class="card text-sm text-slate-500">
+        No datasets yet. Onboard one on the left.
+      </div>
+      <div x-show="loadError" class="card text-[12px] text-rose-700" x-text="loadError"></div>
+
+      <template x-for="d in datasets" :key="d.name">
+        <div class="ds-card space-y-2">
+          <div class="flex items-center justify-between gap-2 flex-wrap">
+            <div>
+              <span class="font-semibold text-slate-900" x-text="d.name"></span>
+              <span class="ds-meta ml-2"
+                    x-text="d.file_count + ' file(s) · ' + fmtBytes(d.total_bytes)"></span>
+            </div>
+            <a class="btn btn-ghost text-[12px] py-1 px-2"
+               :href="'/request/new?dataset=' + encodeURIComponent(d.name)">Use in a request →</a>
+          </div>
+
+          <template x-if="d.profile && !d.profile.error">
+            <div class="space-y-2">
+              <div class="ds-meta">
+                delimiter <code x-text="d.profile.delimiter_kind === 'none' ? '(none)' : JSON.stringify(d.profile.delimiter)"></code>
+                · <span x-text="d.profile.delimiter_kind"></span>
+                · header <span x-text="d.profile.has_header"></span>
+                · <span x-text="d.profile.n_columns + ' columns'"></span>
+                · Auto Loader format <code x-text="d.profile.reader_format"></code>
+              </div>
+              <table class="col-table">
+                <thead><tr><th>Column</th><th>Bronze</th><th>Silver hint</th><th></th></tr></thead>
+                <tbody>
+                  <template x-for="c in d.profile.columns" :key="c.name">
+                    <tr>
+                      <td x-text="c.name"></td>
+                      <td>string</td>
+                      <td x-text="c.inferred_type"></td>
+                      <td>
+                        <span x-show="c.is_json" class="tag tag-json">JSON</span>
+                        <span x-show="c.inferred_type==='timestamp'" class="tag tag-ts">timestamp</span>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <template x-for="n in (d.profile.notes || [])" :key="n">
+                <div class="note" x-text="n"></div>
+              </template>
+            </div>
+          </template>
+          <div x-show="d.profile && d.profile.error" class="text-[12px] text-rose-700"
+               x-text="'profile error: ' + d.profile.error"></div>
+        </div>
+      </template>
+    </section>
+  </div>
+</div>
+
+<script>
+function datasetsPage() {
+  return {
+    volume: "", datasets: [], loading: false, loadError: "",
+    newName: "", chosen: null, dragging: false, uploading: false, uploadMsg: "", uploadOk: false,
+
+    async init() { await this.load(); },
+
+    async load() {
+      this.loading = true; this.loadError = "";
+      try {
+        const r = await fetch("/api/datasets?profile=true", {cache: "no-store"});
+        const d = await r.json();
+        this.volume = d.volume || "";
+        this.datasets = d.datasets || [];
+        if (d.error) this.loadError = d.error;
+      } catch (e) { this.loadError = "" + e; }
+      finally { this.loading = false; }
+    },
+
+    picked(ev) { this.chosen = ev.target.files[0] || null; if (this.chosen && !this.newName) this._suggestName(); },
+    onDrop(ev) { this.dragging = false; this.chosen = (ev.dataTransfer.files || [])[0] || null; if (this.chosen && !this.newName) this._suggestName(); },
+    _suggestName() {
+      // suggest dataset name from filename: strip date/ext, lowercase
+      const base = (this.chosen.name || "").replace(/\.[^.]+$/, "");
+      this.newName = base.replace(/[_-]?\d{6,}.*$/, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+    },
+
+    async upload() {
+      if (!this.chosen || !this.newName) return;
+      this.uploading = true; this.uploadMsg = "";
+      try {
+        const fd = new FormData();
+        fd.append("file", this.chosen);
+        fd.append("dataset", this.newName);
+        const r = await fetch("/api/datasets/upload", {method: "POST", body: fd});
+        const d = await r.json();
+        if (r.ok) {
+          this.uploadOk = true;
+          this.uploadMsg = "Onboarded '" + d.dataset + "' — profiled " + (d.profile.n_columns || "?") + " columns.";
+          this.chosen = null; this.newName = "";
+          await this.load();
+        } else {
+          this.uploadOk = false; this.uploadMsg = "Failed: " + (d.detail || r.status);
+        }
+      } catch (e) { this.uploadOk = false; this.uploadMsg = "Error: " + e; }
+      finally { this.uploading = false; }
+    },
+
+    fmtBytes(n) {
+      if (!n) return "0 B";
+      const u = ["B","KB","MB","GB"]; let i = 0; let v = n;
+      while (v >= 1024 && i < u.length-1) { v /= 1024; i++; }
+      return v.toFixed(v < 10 && i > 0 ? 1 : 0) + " " + u[i];
+    },
+  };
+}
+</script>
+{% endblock %}

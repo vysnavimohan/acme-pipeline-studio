@@ -1,0 +1,426 @@
+{% extends "_base.html" %}
+{% block title %}Agent Config · {{ brand.name if brand else 'Databricks Pipeline Studio' }}{% endblock %}
+
+{% block head_extra %}
+<style>
+  .agent-card { transition: border-color 150ms, box-shadow 150ms; cursor: pointer; }
+  .agent-card:hover { border-color: var(--dbx-navy); }
+  .agent-card.selected { border-color: var(--dbx-orange);
+                         box-shadow: 0 0 0 2px rgba(var(--dbx-accent-rgb), .35); }
+  .prompt-editor { min-height: 480px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                   font-size: 12px; line-height: 1.5; white-space: pre; }
+  .diff-banner { background: var(--dbx-mist); color: #00525B;
+                 padding: 0.5rem 0.8rem; border-radius: 0.45rem; font-size: 0.78rem; }
+  .default-banner { background: var(--surface-alt); color: var(--ink-dim);
+                    border: 1px solid var(--border);
+                    padding: 0.5rem 0.8rem; border-radius: 0.45rem; font-size: 0.78rem; }
+  .confluence-banner { background: #E8F0FE; color: #1B4FA8;
+                       border: 1px solid #C4D6F5;
+                       padding: 0.5rem 0.8rem; border-radius: 0.45rem; font-size: 0.78rem; }
+
+  /* Rendered Confluence page preview */
+  .confluence-preview {
+    background: #ffffff; border: 1px solid #C4D6F5;
+    border-radius: 0.55rem; padding: 1.1rem 1.3rem; min-height: 300px;
+    max-height: 60vh; overflow-y: auto;
+    font-size: 0.86rem; line-height: 1.55; color: var(--ink);
+  }
+  .confluence-preview h1, .confluence-preview h2, .confluence-preview h3,
+  .confluence-preview h4 { color: var(--ink); font-weight: 700; margin: 0.9em 0 0.35em; }
+  .confluence-preview h1 { font-size: 1.25rem; }
+  .confluence-preview h2 { font-size: 1.1rem; }
+  .confluence-preview h3 { font-size: 0.95rem; }
+  .confluence-preview p { margin: 0.45em 0; }
+  .confluence-preview ul, .confluence-preview ol { margin: 0.45em 0 0.45em 1.4em; }
+  .confluence-preview ul { list-style: disc; }
+  .confluence-preview ol { list-style: decimal; }
+  .confluence-preview code { background: var(--dbx-mist); padding: 0.05em 0.3em;
+                             border-radius: 3px; font-size: 0.82em; }
+  .confluence-preview pre { background: var(--surface-alt); border: 1px solid var(--border); padding: 0.6em 0.8em;
+                            border-radius: 6px; overflow-x: auto; margin: 0.5em 0; }
+  .confluence-preview table { border-collapse: collapse; margin: 0.6em 0; }
+  .confluence-preview th, .confluence-preview td { border: 1px solid var(--border-strong);
+                                                   padding: 0.3em 0.6em; }
+  .confluence-preview a { color: var(--dbx-navy); text-decoration: underline; }
+  .confluence-preview img { max-width: 100%; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div x-data="agentConfigPage()" x-init="init()" class="space-y-5">
+  <div>
+    <h1 class="text-2xl font-semibold text-slate-900">Agent Config</h1>
+    <p class="text-sm text-slate-600 max-w-3xl">
+      Each agent runs against guidelines that encode Databricks engineering standards,
+      finance conventions, and SDP/LDP best practice. Guidelines are <strong>data,
+      not code</strong> — owned by the data engineering team. Keep them inline
+      (editable below, stored in Delta) or link a Confluence page: the page
+      content becomes the agent's live guidelines, fetched at run time.
+    </p>
+  </div>
+
+  <div class="grid grid-cols-12 gap-5">
+    <!-- Left rail: agents -->
+    <aside class="col-span-4 space-y-2.5">
+      <div x-show="!agents.length" class="card">
+        <div class="flex items-center gap-2 text-sm text-slate-500">
+          <span class="ops-spinner teal"></span> Loading agent catalog…
+        </div>
+      </div>
+      <template x-for="a in agents" :key="a.agent_name">
+        <div class="card agent-card" :class="selected && selected.agent_name === a.agent_name ? 'selected' : ''"
+             @click="select(a.agent_name)" :id="a.agent_name">
+          <div class="flex items-center justify-between gap-2">
+            <div class="text-sm font-semibold" x-text="a.label"></div>
+            <div class="flex items-center gap-1">
+              {% if confluence_enabled %}
+              <span x-show="a.confluence_page_id" class="pill"
+                    style="background:#E8F0FE; color:#1B4FA8;"
+                    title="Guidelines live on a Confluence page">confluence</span>
+              {% endif %}
+              <span x-show="!a.confluence_page_id && a.diverges_from_default" class="pill"
+                    style="background:var(--dbx-mist); color:#00525B;">customised</span>
+              <span x-show="!a.confluence_page_id && !a.diverges_from_default" class="pill pill-pending">default</span>
+            </div>
+          </div>
+          <div class="text-xs text-slate-600 mt-1" x-text="a.description"></div>
+          <div class="text-[10px] text-slate-500 mt-1">
+            v<span x-text="a.version || 0"></span>
+            <span x-show="a.updated_at"> · last edited <span
+                  x-text="(a.updated_at || '').toString().slice(0,16)"></span>
+              by <span x-text="a.updated_by || '?'"></span></span>
+          </div>
+        </div>
+      </template>
+    </aside>
+
+    <!-- Right pane: editor / Confluence preview -->
+    <section class="col-span-8 card">
+      <div x-show="!selected" class="text-sm text-slate-500">
+        Pick an agent on the left to view + edit its guidelines.
+      </div>
+
+      <template x-if="selected">
+        <div class="space-y-3">
+          <div class="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <div class="text-xs uppercase tracking-widest text-slate-500"
+                   x-text="selected.agent_name"></div>
+              <h3 class="text-base font-semibold mt-0.5" x-text="selected.label"></h3>
+            </div>
+            <div class="flex items-center gap-2 flex-wrap">
+              <span x-show="status" class="text-xs" :class="statusOk ? 'text-emerald-700' : 'text-rose-700'"
+                    x-text="status"></span>
+              <!-- Confluence controls (disabled for the PoC) -->
+              {% if confluence_enabled %}
+              <template x-if="!selected.confluence_page_id">
+                <button class="btn btn-ghost" @click="showLinkForm = !showLinkForm"
+                        title="Move these guidelines to a Confluence page">📎 Link Confluence page</button>
+              </template>
+              {% endif %}
+              <template x-if="!selected.confluence_page_id">
+                <button class="btn btn-ghost" @click="resetDefault()">Reset to default</button>
+              </template>
+              <template x-if="!selected.confluence_page_id">
+                <button class="btn btn-primary" @click="save()" :disabled="busy"
+                        x-text="busy ? 'Saving…' : 'Save guidelines'"></button>
+              </template>
+            </div>
+          </div>
+
+          <!-- Link form -->
+          <div x-show="showLinkForm && !selected.confluence_page_id"
+               class="flex items-center gap-2 bg-slate-50 rounded p-3">
+            <input class="tf flex-1 font-mono text-[12px]" x-model="linkDraft"
+                   placeholder="Paste a Confluence page URL (e.g. https://databricks.atlassian.net/wiki/spaces/.../pages/123456/...)">
+            <button class="btn btn-primary" @click="linkConfluence()" :disabled="busy || !linkDraft.trim()"
+                    x-text="busy ? 'Linking…' : 'Link'"></button>
+          </div>
+
+          <!-- ============ CONFLUENCE-LINKED VIEW ============ -->
+          <template x-if="selected.confluence_page_id">
+            <div class="space-y-3">
+              <div class="confluence-banner flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <strong>Guidelines live on Confluence.</strong>
+                  <span x-show="confluencePage">
+                    “<span x-text="confluencePage && confluencePage.title"></span>”
+                    · v<span x-text="confluencePage && confluencePage.version"></span>
+                    · updated <span x-text="confluencePage && (confluencePage.updated_at || '').toString().slice(0,16)"></span>
+                    by <span x-text="confluencePage && confluencePage.updated_by"></span>
+                  </span>
+                  <div class="text-[11px] opacity-80 mt-0.5">
+                    The page content is the agent's live prompt — edit it in Confluence and
+                    hit Refresh (the agent itself re-fetches with a 60s cache).
+                  </div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <a class="btn btn-primary" :href="selected.confluence_url" target="_blank">
+                    Open in Confluence ↗</a>
+                  <button class="btn btn-ghost" @click="refreshPreview()" :disabled="previewBusy"
+                          x-text="previewBusy ? 'Refreshing…' : '↻ Refresh'"></button>
+                  <button class="btn btn-ghost" @click="unlinkConfluence()"
+                          title="Fall back to the Delta-stored prompt">Unlink</button>
+                </div>
+              </div>
+
+              <div x-show="previewError" class="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded p-2"
+                   x-text="previewError"></div>
+
+              <div x-show="previewBusy && !confluencePage" class="confluence-preview flex items-center justify-center">
+                <span class="ops-spinner teal"></span>
+              </div>
+              <div x-show="confluencePage" class="confluence-preview"
+                   x-html="confluencePage && confluencePage.html"></div>
+            </div>
+          </template>
+
+          <!-- ============ INLINE (Delta-stored) VIEW ============ -->
+          <template x-if="!selected.confluence_page_id">
+            <div class="space-y-3">
+              <div x-show="!selected.diverges_from_default" class="default-banner">
+                This agent is running on the code default. Any change you save here becomes the active override.
+              </div>
+              <div x-show="selected.diverges_from_default" class="diff-banner">
+                This agent is using a customised override (v<span x-text="selected.version"></span>).
+                Reset to fall back to the code default.
+              </div>
+              <textarea class="tf prompt-editor" x-model="draft" spellcheck="false"></textarea>
+              <details class="text-xs text-slate-600">
+                <summary class="cursor-pointer hover:text-slate-900">View code default (read-only)</summary>
+                <pre class="bg-slate-50 p-3 rounded mt-2 text-[11px] whitespace-pre-wrap"
+                     x-text="selected.default_prompt"></pre>
+              </details>
+            </div>
+          </template>
+
+          <!-- Grilling loop settings (only for agents that support it) -->
+          <template x-if="selected.supports_iterations">
+            <div class="card" style="border-left: 3px solid var(--dbx-orange); background: #FFFDF2;">
+              <div class="text-xs uppercase tracking-widest text-slate-500">Grilling loop</div>
+              <p class="text-xs text-slate-700 mt-1" x-text="selected.loop_settings_label"></p>
+              <div class="flex flex-wrap items-center gap-4 mt-3">
+                <label class="text-xs text-slate-700">
+                  Max iterations
+                  <input type="number" min="1" max="5" x-model.number="loopMaxIter"
+                         class="tf inline-block ml-1" style="width: 4.5rem;" />
+                </label>
+                <template x-if="selected.agent_name === 'spec_critic'">
+                  <label class="text-xs text-slate-700">
+                    If still unresolved at max
+                    <select x-model="loopAction" class="tf inline-block ml-1" style="width: auto;">
+                      <option value="proceed">proceed anyway</option>
+                      <option value="requeue">send back to queue</option>
+                    </select>
+                  </label>
+                </template>
+                <template x-if="selected.confluence_page_id">
+                  <button class="btn btn-ghost text-[12px] py-1 px-2" @click="saveLoopOnly()"
+                          :disabled="busy">Save loop settings</button>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+    </section>
+  </div>
+</div>
+
+<script>
+function agentConfigPage() {
+  return {
+    agents: [],
+    selected: null,
+    draft: "",
+    loopMaxIter: 1,
+    loopAction: "proceed",
+    busy: false,
+    status: "",
+    statusOk: true,
+    showLinkForm: false,
+    linkDraft: "",
+    confluencePage: null,
+    previewBusy: false,
+    previewError: "",
+
+    async init() {
+      await this.loadList();
+      // honour /agent-config#agent_name deep links
+      const hash = location.hash.replace(/^#/, "");
+      const target = hash || (this.agents[0] && this.agents[0].agent_name);
+      if (target) this.select(target);
+    },
+
+    async loadList() {
+      const r = await fetch("/api/agent-config");
+      if (!r.ok) return;
+      const data = await r.json();
+      this.agents = data.guidelines || [];
+    },
+
+    // The list payload already carries everything (prompt, loop settings,
+    // confluence link) — selecting is instant, no per-agent round trip.
+    select(name) {
+      const a = this.agents.find(x => x.agent_name === name);
+      if (!a) return;
+      this.status = "";
+      this.showLinkForm = false;
+      this.linkDraft = "";
+      this.confluencePage = null;
+      this.previewError = "";
+      this.selected = a;
+      this.draft = a.prompt;
+      this.loopMaxIter = a.max_iterations || a.default_max_iterations || 1;
+      this.loopAction = a.loop_action || a.default_loop_action || "proceed";
+      history.replaceState(null, "", "#" + name);
+      if (a.confluence_page_id) this.loadPreview(false);
+    },
+
+    async loadPreview(refresh) {
+      if (!this.selected || !this.selected.confluence_page_id) return;
+      this.previewBusy = true; this.previewError = "";
+      const name = this.selected.agent_name;
+      try {
+        const r = await fetch("/api/agent-config/" + encodeURIComponent(name)
+                              + "/confluence/preview" + (refresh ? "?refresh=true" : ""));
+        const data = await r.json();
+        if (!this.selected || this.selected.agent_name !== name) return;
+        if (!r.ok) throw new Error(data.detail || r.status);
+        this.confluencePage = data;
+      } catch (e) {
+        this.previewError = "Couldn't fetch the Confluence page: " + e.message;
+      } finally {
+        this.previewBusy = false;
+      }
+    },
+
+    refreshPreview() { return this.loadPreview(true); },
+
+    async linkConfluence() {
+      if (!this.selected || !this.linkDraft.trim()) return;
+      this.busy = true; this.status = ""; this.statusOk = true;
+      try {
+        const r = await fetch("/api/agent-config/" + encodeURIComponent(this.selected.agent_name) + "/confluence", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({page: this.linkDraft.trim(),
+                                updated_by: "vaishnavi.mohan@databricks.com"}),
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || r.status);
+        this.status = `Linked to “${data.title}” — page content is now the live prompt.`;
+        this.showLinkForm = false; this.linkDraft = "";
+        await this.loadList();
+        this.select(this.selected.agent_name);
+      } catch (e) {
+        this.statusOk = false;
+        this.status = "Link failed: " + e.message;
+      } finally {
+        this.busy = false;
+      }
+    },
+
+    async unlinkConfluence() {
+      if (!this.selected) return;
+      if (!confirm(`Unlink the Confluence page from "${this.selected.label}"? The agent falls back to the stored prompt.`)) return;
+      this.busy = true; this.status = "";
+      try {
+        const r = await fetch("/api/agent-config/" + encodeURIComponent(this.selected.agent_name) + "/confluence",
+                              {method: "DELETE"});
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || r.status);
+        this.status = "Unlinked — using the stored prompt again.";
+        await this.loadList();
+        this.select(this.selected.agent_name);
+      } catch (e) {
+        this.statusOk = false;
+        this.status = "Unlink failed: " + e.message;
+      } finally {
+        this.busy = false;
+      }
+    },
+
+    async save() {
+      if (!this.selected) return;
+      this.busy = true; this.status = ""; this.statusOk = true;
+      try {
+        const body = {
+          prompt: this.draft,
+          updated_by: "vaishnavi.mohan@databricks.com",
+        };
+        if (this.selected.supports_iterations) {
+          body.max_iterations = this.loopMaxIter;
+          body.loop_action = this.loopAction;
+        }
+        const r = await fetch("/api/agent-config/" + encodeURIComponent(this.selected.agent_name), {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(body),
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || r.status);
+        this.status = `Saved (v${data.version}) — next agent run uses this.`;
+        await this.loadList();
+        this.select(this.selected.agent_name);
+      } catch (e) {
+        this.statusOk = false;
+        this.status = "Save failed: " + e.message;
+      } finally {
+        this.busy = false;
+      }
+    },
+
+    // For Confluence-linked agents the prompt comes from the page, but loop
+    // settings still live in Delta — save them without touching the prompt.
+    async saveLoopOnly() {
+      if (!this.selected) return;
+      this.busy = true; this.status = ""; this.statusOk = true;
+      try {
+        const body = {
+          prompt: this.selected.prompt,
+          updated_by: "vaishnavi.mohan@databricks.com",
+          max_iterations: this.loopMaxIter,
+          loop_action: this.loopAction,
+        };
+        const r = await fetch("/api/agent-config/" + encodeURIComponent(this.selected.agent_name), {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(body),
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || r.status);
+        this.status = "Loop settings saved.";
+        await this.loadList();
+        this.select(this.selected.agent_name);
+      } catch (e) {
+        this.statusOk = false;
+        this.status = "Save failed: " + e.message;
+      } finally {
+        this.busy = false;
+      }
+    },
+
+    async resetDefault() {
+      if (!this.selected) return;
+      if (!confirm(`Reset "${this.selected.label}" to its code default? Your current override will be lost.`)) return;
+      this.busy = true; this.status = "";
+      try {
+        const r = await fetch("/api/agent-config/" + encodeURIComponent(this.selected.agent_name) + "/reset",
+                              {method: "POST"});
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || r.status);
+        this.status = "Reset to default.";
+        await this.loadList();
+        this.select(this.selected.agent_name);
+      } catch (e) {
+        this.statusOk = false;
+        this.status = "Reset failed: " + e.message;
+      } finally {
+        this.busy = false;
+      }
+    },
+  };
+}
+</script>
+{% endblock %}

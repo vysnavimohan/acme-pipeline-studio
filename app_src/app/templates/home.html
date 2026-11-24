@@ -1,0 +1,211 @@
+{% extends "_base.html" %}
+{% block title %}Home · {{ brand.name if brand else 'Databricks Pipeline Studio' }}{% endblock %}
+
+{% block content %}
+<div x-data="homeDashboard()" x-init="init()" class="space-y-6">
+
+  <!-- Hero — flat Databricks Navy with a Lava CTA -->
+  <section class="card text-white relative overflow-hidden"
+           style="background: var(--dbx-navy); border: none;">
+    <div class="flex items-start justify-between gap-6 relative z-10">
+      <div>
+        <div class="text-xs uppercase tracking-widest mb-2 font-bold"
+             style="color: var(--dbx-orange);">{{ brand.name if brand else 'Databricks Pipeline Studio' }}</div>
+        <h1 class="text-3xl font-extrabold leading-tight">From a business question to a governed Genie Agent and dashboard.</h1>
+        <p class="mt-2 text-slate-200 max-w-2xl text-sm leading-relaxed">
+          <strong>The analyst:</strong> a business analyst in FP&amp;A at Acme Corp. Request
+          <strong>REQ-0142</strong>: a Genie Agent the finance team can ask where margin is leaking
+          and what cash is doing, plus a dashboard to track both every week.
+          Pipeline Studio runs the human steps: the grill, the reuse check, the metric view for the gap,
+          data quality, plan approval and PR review. <strong>Genie Code builds</strong> the assets,
+          started from a Lakeflow Job whose prompt @-mentions the skills.
+          Two human gates: approve the plan, then approve the PR. Then promote dev, staging, prod.
+        </p>
+        <div class="mt-4 flex flex-wrap gap-3">
+          <a href="/request/new" class="btn btn-primary">New request →</a>
+          <a href="/tracker" class="btn btn-ghost" style="background:rgba(255,255,255,0.10); color:white; border-color:rgba(255,255,255,0.20);">Open tracker</a>
+          <a href="/agent-config" class="btn btn-ghost" style="background:rgba(255,255,255,0.10); color:white; border-color:rgba(255,255,255,0.20);">Edit agent config</a>
+        </div>
+      </div>
+      <div class="text-right text-[11px] text-slate-300">
+        <div>Workspace</div>
+        {# Was hardcoded to one workspace name, which is simply wrong on every
+           other deployment — the same class of drift as the committed placeholder
+           config in KNOWN_ISSUES 7. Derived from the host instead. #}
+        <code class="text-white">{{ workspace_label }}</code>
+        <div class="mt-2">Pipelines repo</div>
+        <a class="hover:underline" style="color: var(--dbx-orange);" target="_blank"
+           href="https://github.com/{{ github_repo }}">github.com/{{ github_repo }}</a>
+      </div>
+    </div>
+    <!-- Subtle brand watermark. Parameterised like the nav logo: this one was
+         missed on the first pass and a themed deployment rendered the Databricks
+         mark inside its own hero, which is exactly the kind of half-applied theme
+         that reads as a bug. Found by asserting against the RENDERED page rather
+         than the templates. -->
+    <img src="{{ brand.logo if brand else '/static/databricks_logo.svg' }}" alt=""
+         class="absolute -right-8 -bottom-8 w-44 h-44 rounded-2xl opacity-20 rotate-6 object-contain">
+  </section>
+
+  <!-- KPI cards (always rendered; values fill in from /api/requests) -->
+  <section class="grid grid-cols-2 md:grid-cols-6 gap-3">
+    <template x-for="kpi in kpis" :key="kpi.key">
+      <div class="card" style="padding: 0.85rem 1rem;">
+        <div class="text-[10px] uppercase tracking-widest text-slate-500" x-text="kpi.label"></div>
+        <div class="mt-1.5 text-2xl font-bold" :class="kpi.color" x-text="kpi.count"></div>
+      </div>
+    </template>
+  </section>
+  <div x-show="loadError" class="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded px-3 py-2"
+       x-text="'Dashboard refresh failed: ' + loadError + ' — counters may be stale.'"></div>
+
+  <!-- Two-up: recent activity + flow overview -->
+  <section class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+    <div class="card lg:col-span-2">
+      <div class="flex items-center justify-between">
+        <h3>Recent requests</h3>
+        <a class="text-xs text-amber-600 hover:underline" href="/tracker">View all →</a>
+      </div>
+      <div x-show="!recent.length && !loaded" class="text-sm text-slate-500 mt-3">
+        Loading…
+      </div>
+      <div x-show="!recent.length && loaded" class="text-sm text-slate-500 mt-3">
+        No requests yet. <a href="/request/new" class="text-amber-600 underline">Submit your first one</a>.
+      </div>
+      <div class="mt-2 divide-y divide-slate-100">
+        <template x-for="r in recent" :key="r.request_id">
+          <a class="block py-2.5 px-1 hover:bg-slate-50 rounded cursor-pointer"
+             :href="'/tracker?request_id=' + r.request_id">
+            <div class="flex items-center justify-between gap-2">
+              <code class="text-[11px] text-slate-500" x-text="r.request_id.slice(0,8)"></code>
+              <span class="pill" :class="'pill-' + (r.final_status || 'pending')"
+                    x-text="r.final_status || 'pending'"></span>
+            </div>
+            <div class="text-sm text-slate-800 mt-0.5 truncate" x-text="r.intent || '(no intent)'"></div>
+            <div class="text-[10px] text-slate-500 mt-0.5"
+                 x-text="(r.submitted_at || '').toString().slice(0,16) + ' · ' + (r.requested_by || '?')"></div>
+          </a>
+        </template>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>The agent team</h3>
+      <p class="text-xs text-slate-600 mt-1 mb-3">
+        Each agent has specialist Databricks knowledge baked in.
+        <a href="/agent-config" class="text-amber-600 hover:underline">View / edit config →</a>
+      </p>
+      <ul class="space-y-1.5 text-[13px]">
+        <template x-for="a in agents" :key="a.agent_name">
+          <li class="flex items-center justify-between gap-2">
+            <a class="hover:text-amber-700" :href="'/agent-config#' + a.agent_name" x-text="a.label"></a>
+            <span x-show="a.diverges_from_default" class="pill" style="background:#dbeafe; color:#1e40af;">customised</span>
+          </li>
+        </template>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Sources summary — file-first (Auto Loader), CDC disconnected for the PoC -->
+  <section class="grid grid-cols-1 md:grid-cols-2 gap-5">
+    <div class="card">
+      <h3>Landing zone · Auto Loader</h3>
+      <div class="text-sm text-slate-700 mt-1">
+        Vendor extracts (CSV / multi-char-delimited <code>.dat</code>) land as files in a
+        Unity Catalog Volume — simulating the Databricks ADLS2 landing zone. Onboard each dataset
+        once in <a href="/connectors" class="text-amber-600 hover:underline">Connectors</a>,
+        then build it through to Gold.
+      </div>
+      <ul class="text-xs text-slate-600 mt-2 list-disc pl-5 space-y-0.5">
+        <li>Add source → Suggest (agent) → Test → <strong>ready</strong></li>
+        <li>Ready datasets appear in the New Request data browser</li>
+        {% if lakebase_enabled %}
+        <li>External Postgres sources are <span class="text-emerald-600">connected</span> via Lakebase</li>
+        {% else %}
+        <li>External Postgres sources are <span class="text-rose-600">disconnected</span> on this deployment</li>
+        {% endif %}
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Acme Corp ERP feeds — ready to use</h3>
+      <div class="text-sm text-slate-700 mt-1">
+        A fresh deploy is seeded with Acme Corp's ERP extracts as ready datasets, so the grill
+        can pick a source without a connection step. They feed the built Margin &amp; Cash medallion.
+      </div>
+      <ul class="text-xs text-slate-600 mt-2 list-disc pl-5 space-y-0.5">
+        <li><code>sales_invoice_lines</code>, <code>ar_transactions</code> (revenue, margin, AR)</li>
+        <li><code>inventory_on_hand</code>, <code>freight_charges</code>, <code>supplier_rebates</code></li>
+        <li><code>fpa_plan</code> (plan gross margin by category)</li>
+      </ul>
+    </div>
+  </section>
+
+</div>
+
+<script>
+function homeDashboard() {
+  // Always-present KPI scaffolding so the cards render at zero before the
+  // first API response (was disappearing entirely on slow first paint).
+  const _SEED_KPIS = [
+    {key: "queued",         label: "Queued",          count: 0, color: "text-slate-700"},
+    {key: "in_progress",    label: "In progress",     count: 0, color: "text-amber-600"},
+    {key: "pending_review", label: "Awaiting review", count: 0, color: "text-blue-600"},
+    {key: "deployed",       label: "Deployed",        count: 0, color: "text-emerald-600"},
+    {key: "failed",         label: "Failed",          count: 0, color: "text-rose-600"},
+  ];
+
+  return {
+    requests: [],
+    recent: [],
+    agents: [],
+    kpis: _SEED_KPIS.map(k => ({...k})),
+    loadError: null,
+    loaded: false,
+
+    async init() {
+      await Promise.all([this.loadRequests(), this.loadAgents()]);
+      // refresh every 15s — was 60s; with terminal-state requests it's cheap
+      setInterval(() => { this.loadRequests(); }, 15000);
+    },
+
+    async loadRequests() {
+      try {
+        const r = await fetch("/api/requests", {cache: "no-store"});
+        if (!r.ok) {
+          this.loadError = "API returned " + r.status;
+          return;
+        }
+        const data = await r.json();
+        this.requests = data.requests || [];
+        this.recent = this.requests.slice(0, 5);
+        const c = (s) => this.requests.filter(r => (r.final_status || "pending") === s).length;
+        // Re-derive into a fresh array so Alpine sees the change reliably
+        this.kpis = [
+          {key: "queued",         label: "Queued",            count: c("queued"),                 color: "text-slate-700"},
+          {key: "in_progress",    label: "In progress",       count: c("in_progress"),            color: "text-amber-600"},
+          {key: "pending_review", label: "Awaiting approval", count: c("pending_review"),         color: "text-blue-600"},
+          {key: "blocked",        label: "Blocked",           count: c("blocked_on_pr_approval"), color: "text-rose-500"},
+          {key: "deployed",       label: "Deployed",          count: c("deployed"),               color: "text-emerald-600"},
+          {key: "failed",         label: "Failed",            count: c("failed") + c("rejected"), color: "text-rose-600"},
+        ];
+        this.loadError = null;
+        this.loaded = true;
+      } catch (e) {
+        this.loadError = "Network: " + e.message;
+      }
+    },
+
+    async loadAgents() {
+      try {
+        const r = await fetch("/api/agent-config", {cache: "no-store"});
+        if (!r.ok) return;
+        const data = await r.json();
+        this.agents = data.guidelines || [];
+      } catch (e) {
+        // Agents are optional context, swallow
+      }
+    },
+  };
+}
+</script>
+{% endblock %}

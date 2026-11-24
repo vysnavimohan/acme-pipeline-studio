@@ -1,0 +1,18 @@
+[
+  {
+    "release_id": "rel-9fcfaba3",
+    "title": "Example: REQ-0D6A2A64 \u00b7 Finance Margin & Cash Genie",
+    "summary": "Finance Margin & Cash Genie: metric view vmohan_demo_catalog.studio_prod.mv_give_finance_team_investigate, Genie Agent 'Finance Margin & Cash Genie', published dashboard 'Finance Margin & Cash Weekly Dashboard'. Built by Genie Code from the reviewed plan; AI review: approve.",
+    "created_by": "Demo analyst",
+    "request_ids": "[\"0d6a2a64-640e-43c0-8399-995480563a82\"]",
+    "status": "released"
+  },
+  {
+    "release_id": "rel-5a2521f7",
+    "title": "Example: REQ-C88D2BF0 \u00b7 Branch Discounting & Pricing Performance",
+    "summary": "Branch Discounting & Pricing Performance: published dashboard 'Branch Discounting & Pricing Performance'. Built by Genie Code from the reviewed plan; AI review: approve.",
+    "created_by": "Demo analyst",
+    "request_ids": "[\"c88d2bf0-6159-4ef8-b89f-a3524921a75f\"]",
+    "status": "released"
+  }
+]

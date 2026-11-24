@@ -1,0 +1,1163 @@
+{% extends "_base.html" %}
+{% block title %}New request · {{ brand.name if brand else 'Acme Corp' }}{% endblock %}
+
+{% block head_extra %}
+<style>
+  .chat-pane { height: 74vh; min-height: 560px; display: flex; flex-direction: column; }
+  .chat-log  { flex: 1; overflow-y: auto; padding: 0.5rem 0.25rem; }
+  .chat-msg  { margin-bottom: 0.7rem; max-width: 92%; }
+  .chat-msg.user { margin-left: auto; }
+  .chat-bubble {
+    border-radius: 0.75rem; padding: 0.55rem 0.85rem; font-size: 0.92rem; line-height: 1.4;
+  }
+  .chat-bubble.assistant { background: var(--dbx-mist); color: var(--ink);
+                            border-top-left-radius: 0.25rem; }
+  .chat-bubble.user      { background: var(--dbx-orange); color: var(--ink);
+                            border-top-right-radius: 0.25rem; }
+  .chat-bubble.system    { background: #FFF3C2; color: #7A6200;
+                            font-size: 0.82rem; font-style: italic; }
+  .q-eyebrow { display: block; font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
+               letter-spacing: 0.06em; color: var(--dbx-navy-2); margin-bottom: 0.2rem; }
+  .form-pane    { height: 74vh; min-height: 560px; overflow-y: auto; padding-right: 0.4rem; }
+  .step-label {
+    display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px;
+    font-size: 0.65rem; letter-spacing: 0.05em; text-transform: uppercase;
+    font-weight: 700; background: var(--dbx-mist); color: #00525B;
+  }
+  .pills { display: flex; gap: .3rem; flex-wrap: wrap; margin-bottom: .5rem; }
+  .pill { font-size: .66rem; font-weight: 700; border-radius: 999px; padding: .15rem .55rem;
+          border: 1px solid var(--border); color: var(--ink-dim); background: #fff; }
+  .pill.done { background: #F2FBF6; color: #137A45; border-color: #BEE8D2; }
+  .pill.active { background: #FFF8DC; color: #7A6200; border-color: var(--dbx-orange); }
+  .examples { display: flex; gap: .35rem; flex-wrap: wrap; align-items: center; margin: 0 0 .5rem; }
+  .examples .lbl { font-size: .68rem; color: var(--ink-dim); font-weight: 600; }
+  .ex { font-size: .7rem; border: 1px solid var(--border-strong); border-radius: 999px; padding: .2rem .6rem;
+        background: #fff; color: var(--dbx-navy-2); cursor: pointer; }
+  .ex:disabled { opacity: .45; cursor: not-allowed; }
+
+  /* review cards (rendered inline in the chat, in journey order) */
+  .reco-card { background: #fff; border: 1px solid var(--border); border-radius: .8rem;
+               padding: .85rem .95rem; margin: .4rem 0 .9rem; width: 100%;
+               box-shadow: 0 1px 2px rgba(24,28,31,.04), 0 6px 18px -8px rgba(24,28,31,.08);
+               animation: ops-reveal 320ms ease-out; }
+  @keyframes ops-reveal { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  .reco-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .45rem; flex-wrap: wrap; }
+  .reco-head b { font-size: .92rem; }
+  .reco-cov { margin-left: auto; background: #E2F6EC; color: #137A45; font-weight: 700;
+              font-size: .74rem; border-radius: 999px; padding: .2rem .6rem; }
+  .reco-eyebrow { display: inline-block; font-size: .62rem; font-weight: 700; text-transform: uppercase;
+                  letter-spacing: .07em; color: var(--dbx-navy-2); background: #EEF4FF;
+                  border: 1px solid #D7E6FF; border-radius: 999px; padding: .12rem .55rem; margin-bottom: .45rem; }
+  .reco-table { width: 100%; font-size: .76rem; border-collapse: collapse; margin: .35rem 0 .6rem; }
+  .reco-table th { text-align: left; font-size: .6rem; text-transform: uppercase; letter-spacing: .05em;
+                   color: var(--ink-dim); border-bottom: 1px solid var(--border); padding: .3rem .35rem; }
+  .reco-table td { border-bottom: 1px solid #EEF1F3; padding: .35rem; vertical-align: top; }
+  .reco-table .reason-row td { background: #FFFCF3; opacity: 1; }
+  .reco-table tr.off td { opacity: .55; }
+  .reuse-table td:first-child { min-width: 11rem; }
+  .reuse-table td:last-child  { min-width: 12rem; }
+  .reuse-table td { word-break: break-word; }
+  .reuse-table td.mono { word-break: normal; white-space: nowrap; }
+  .mono { font-family: ui-monospace, Menlo, monospace; font-size: .7rem; }
+  .dec { font-size: .6rem; font-weight: 700; border-radius: 999px; padding: .1rem .45rem;
+         border: 1px solid var(--border); white-space: nowrap; background: var(--dbx-mist); }
+  .dec-reuse  { background: #F2FBF6; color: #137A45; border-color: #BEE8D2; }
+  .dec-extend { background: #EEF4FF; color: var(--dbx-navy-2); border-color: #D7E6FF; }
+  .dec-gap    { background: #FFF3C2; color: #7A6200; border-color: #F0E4B8; }
+  .dec-no_data { background: #FDECEC; color: #B42318; border-color: #F5C2BC; }
+  .dec-raw     { background: #F3EEFF; color: #5B2DB5; border-color: #DCCFF7; }
+  .badge-pending { font-size: .66rem; font-weight: 700; border-radius: 999px; padding: .12rem .5rem;
+                   background: #EEF4FF; color: var(--dbx-navy-2); border: 1px solid #D7E6FF; }
+  .sev { font-size: .6rem; border-radius: 4px; padding: .05rem .35rem; font-weight: 700; text-transform: uppercase; }
+  .sev.drop { background: #FDECEC; color: #B42318; }
+  .sev.warn { background: #FFF8DC; color: #7A6200; }
+  .reco-assets { display: flex; flex-direction: column; gap: .45rem; margin-top: .3rem; }
+  .reco-asset { display: flex; align-items: center; gap: .6rem; border: 1px solid var(--border);
+                border-radius: .55rem; padding: .45rem .6rem; }
+  .reco-body { display: flex; flex-direction: column; min-width: 0; }
+  .reco-body b { font-size: .82rem; }
+  .reco-id { font-size: .62rem; color: var(--ink-dim); font-family: ui-monospace, Menlo, monospace; word-break: break-all; }
+  .reco-open { margin-left: auto; color: var(--dbx-navy-2); font-weight: 700; font-size: .75rem;
+               text-decoration: none; border: 1px solid var(--border-strong);
+               border-radius: .5rem; padding: .25rem .55rem; white-space: nowrap; }
+  .reco-choice { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-top: .7rem; }
+  .reco-decided { font-size: .8rem; color: #137A45; font-weight: 600; margin-top: .6rem; }
+  .reco-mvname { font-family: ui-monospace, Menlo, monospace; font-size: .82rem; font-weight: 700;
+                 background: #F7FAFB; border: 1px solid var(--border); border-radius: .5rem;
+                 padding: .4rem .6rem; margin-bottom: .6rem; word-break: break-all; }
+  .reco-grp { margin-bottom: .55rem; }
+  .reco-lbl { font-size: .64rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+              color: var(--ink-dim); margin: .4rem 0 .3rem; }
+  .reco-chips { display: flex; gap: .35rem; flex-wrap: wrap; }
+  .reco-chip { font-size: .72rem; border-radius: 999px; padding: .18rem .55rem; border: 1px solid var(--border); }
+  .reco-chip.m { background: #F2FBF6; border-color: #BEE8D2; color: #137A45; }
+  .reco-chip.d { background: var(--dbx-mist); }
+  .reco-why { font-size: .8rem; line-height: 1.45; background: #FFFCF3; border: 1px solid #F0E4B8;
+              border-radius: .55rem; padding: .5rem .7rem; margin: .4rem 0; }
+  .yaml-block summary { cursor: pointer; font-size: .78rem; font-weight: 600; color: var(--dbx-navy-2); margin: .3rem 0; }
+  .yaml-block pre { background: #0F1B20; color: #E6F2F5; font-size: .7rem; padding: .6rem .75rem;
+                    border-radius: .5rem; overflow: auto; max-height: 300px; white-space: pre; }
+  .sample-table { width: 100%; font-size: .72rem; border-collapse: collapse; margin: .3rem 0; }
+  .sample-table th, .sample-table td { border-bottom: 1px solid #EEF1F3; padding: .25rem .35rem; text-align: left; white-space: nowrap; }
+  .sample-table th { font-size: .6rem; text-transform: uppercase; color: var(--ink-dim); }
+  .badge-ok  { font-size: .66rem; font-weight: 700; border-radius: 999px; padding: .12rem .5rem;
+               background: #E2F6EC; color: #137A45; border: 1px solid #BEE8D2; }
+  .badge-bad { font-size: .66rem; font-weight: 700; border-radius: 999px; padding: .12rem .5rem;
+               background: #FDECEC; color: #B42318; border: 1px solid #F5C2BC; }
+  .stop-card { border: 1px solid #F5C2BC; background: #FFF5F4; border-radius: .6rem; padding: .6rem .75rem; margin-top: .5rem; font-size: .8rem; }
+  .stop-card ul { margin: .3rem 0 .3rem 1rem; list-style: disc; }
+  .card-err { font-size: .78rem; color: #B42318; margin-top: .4rem; }
+  .card-ok  { font-size: .78rem; color: #137A45; font-weight: 600; }
+  .card-run { font-size: .8rem; color: var(--ink-dim); display: flex; gap: .5rem; align-items: center; }
+  .dq-result { border: 1px solid var(--border); border-radius: .5rem; padding: .4rem .6rem; margin-top: .35rem; font-size: .78rem; }
+  .dq-result.accepted { border-color: #BEE8D2; background: #F2FBF6; }
+  .dq-result.rejected { border-color: #F5C2BC; background: #FFF5F4; }
+  .bench { border: 1px solid var(--border); border-radius: .5rem; padding: .4rem .5rem; margin-bottom: .4rem; }
+  .bench-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: .35rem; align-items: center; }
+  .bench details { margin-top: .3rem; }
+  .bench details pre { background: #0F1B20; color: #E6F2F5; font-size: .66rem; padding: .4rem .6rem;
+                       border-radius: .4rem; overflow: auto; max-height: 180px; white-space: pre-wrap; }
+  .widget-row { display: flex; gap: .4rem; align-items: center; font-size: .78rem; margin: .2rem 0; flex-wrap: wrap; }
+  .chip-row { display: flex; gap: .3rem; flex-wrap: wrap; margin: .2rem 0 .5rem; }
+  .chip-row .reco-chip { max-width: 100%; word-break: break-all; white-space: normal; }
+  .prop-row { border: 1px solid var(--border); border-radius: .5rem; padding: .45rem .6rem; margin-bottom: .4rem; }
+  .prop-row .why { font-size: .72rem; color: var(--ink-dim); margin-top: .15rem; }
+  .summary-dl { display: grid; grid-template-columns: 7.5rem 1fr; gap: .3rem .6rem; font-size: .82rem; }
+  .summary-dl dt { color: var(--ink-dim); font-weight: 600; }
+  .summary-dl dd { margin: 0; word-break: break-word; }
+  .summary-dl pre { white-space: pre-wrap; font-size: .66rem; background: #F7FAFB; padding: .4rem; border-radius: .4rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div x-data="intakePage()" x-init="init()" class="space-y-4">
+
+  <!-- Intro -->
+  <div class="card" style="background: var(--dbx-mist); border-color: var(--dbx-navy);">
+    <h2 class="text-xl font-bold mb-1" style="color: var(--dbx-navy-2);">Raise a request</h2>
+    <p class="text-sm text-slate-700 max-w-3xl">
+      Describe what you need. The intake agent asks what it is for, who uses it, which decisions it drives and
+      which outputs you want (a dashboard, a Genie Agent or both) before it checks anything. Then it walks you
+      through the review cards in the chat. Confirm governance, then click <strong>Submit</strong>. The request
+      is queued on the tracker for the data team to initiate.
+    </p>
+  </div>
+
+  <div class="grid grid-cols-12 gap-4">
+
+    <!-- LEFT: chat + review cards -->
+    <div class="col-span-7 card chat-pane">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="mb-0">Intake agent</h3>
+        <span class="step-label" x-text="stageLabel(stage)"></span>
+      </div>
+      <div class="pills">
+        <span class="pill" :class="pillClass('reuse')">1 What exists</span>
+        <span class="pill" x-show="pipelineNeeded()" :class="pillClass('pipeline')">2 Pipeline</span>
+        <span class="pill" :class="pillClass('metric_view')" x-text="cardNo('metric_view') + ' Metric view'"></span>
+        <span class="pill" :class="pillClass('dq')" x-text="cardNo('dq') + ' Data quality'"></span>
+        <span class="pill" :class="pillClass('design')" x-text="cardNo('design') + ' Design'"></span>
+        <span class="pill" :class="pillClass('governance')" x-text="(cardNo('design') + 1) + ' Governance'"></span>
+        <span class="pill" :class="pillClass('ready')" x-text="(cardNo('design') + 2) + ' Submit'"></span>
+      </div>
+
+      <div class="chat-log" x-ref="chatLog">
+        <template x-for="m in messages" :key="m.id">
+          <div>
+            <!-- text bubbles -->
+            <template x-if="m.kind === 'text'">
+              <div class="chat-msg" :class="m.role">
+                <div class="chat-bubble" :class="m.role">
+                  <span x-show="m.label" class="q-eyebrow" x-text="m.label"></span>
+                  <span x-html="m.html"></span>
+                </div>
+              </div>
+            </template>
+
+            <!-- Card 1: what already exists (or the honest stop) -->
+            <template x-if="m.kind === 'card' && m.card === 'reuse' && journey.reuse">
+              <div class="reco-card">
+                <div class="reco-head">
+                  <span class="reco-eyebrow">1 · What already exists</span>
+                  <span class="reco-cov" x-show="journey.reuse.buildable" x-text="reuseCovText()"></span>
+                </div>
+                <div style="overflow-x:auto" x-show="journey.reuse.items.length">
+                <table class="reco-table reuse-table">
+                  <thead><tr><th>Need</th><th>Decision</th><th>Asset</th><th>Why</th></tr></thead>
+                  <tbody>
+                    <template x-for="(n, i) in journey.reuse.items" :key="i">
+                      <tr>
+                        <td x-text="n.need"></td>
+                        <td><span class="dec" :class="'dec-' + String(n.decision).toLowerCase()" x-text="n.decision === 'RAW' ? 'RAW · pipeline needed' : n.decision"></span></td>
+                        <td class="mono" :title="n.asset || ''" x-text="assetText(n)"></td>
+                        <td x-text="n.why"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+                </div>
+                <div class="reco-assets" x-show="journey.reuse.related_assets.length">
+                  <div class="reco-lbl">Already in the workspace for this area</div>
+                  <template x-for="(c, i) in relatedShown()" :key="i">
+                    <div class="reco-asset">
+                      <div class="reco-body">
+                        <b x-text="c.title"></b>
+                        <span class="reco-id" x-text="c.kind + (c.id ? ' · ' + c.id : '')"></span>
+                      </div>
+                      <span class="dec" :class="'dec-' + String(c.decision || '').toLowerCase()" x-show="c.decision" x-text="c.decision"></span>
+                      <a class="reco-open" x-show="c.open_url" :href="c.open_url" target="_blank" rel="noopener">Open →</a>
+                    </div>
+                  </template>
+                  <button class="btn btn-ghost text-[12px]" x-show="journey.reuse.related_assets.length > 6"
+                          @click="showAllRelated = !showAllRelated"
+                          x-text="showAllRelated ? 'Show fewer' : 'Show all ' + journey.reuse.related_assets.length"></button>
+                </div>
+
+                <!-- honest stop: the data is not there -->
+                <div class="stop-card" x-show="!journey.reuse.buildable">
+                  <b>I can't build this from the data I can see.</b>
+                  <ul>
+                    <template x-for="(x, i) in journey.reuse.no_data" :key="i">
+                      <li><span x-text="x.missing"></span></li>
+                    </template>
+                  </ul>
+                  <div>Nothing has been built, and submit stays locked.</div>
+                  <div class="reco-choice">
+                    <button class="btn btn-primary" x-show="!journey.reuse.log_request" :disabled="busy"
+                            @click="logRequest()">Log this request</button>
+                    <span class="card-ok" x-show="journey.reuse.log_request">
+                      Logged as <span class="mono" x-text="shortId(journey.reuse.log_request)"></span> on the backlog.
+                    </span>
+                  </div>
+                </div>
+
+                <div class="reco-choice" x-show="journey.reuse.buildable && !journey.reuse.decided">
+                  <button class="btn btn-primary" :disabled="busy || !!jobRunning()" @click="decideReuse('agree')">
+                    Agree: build the plan (only the gap)
+                  </button>
+                  <button class="btn btn-ghost" :disabled="busy || !!jobRunning()" @click="decideReuse('raw_tables')">
+                    Build on the raw tables instead
+                  </button>
+                </div>
+                <div class="reco-decided" x-show="journey.reuse.decided === 'agree'">Agreed: building the plan.</div>
+                <div class="card-err" x-show="jobError('match')">
+                  <span x-text="jobError('match')"></span>
+                  <button class="btn btn-ghost text-[12px] ml-2" :disabled="busy" @click="retry('match')">Try again</button>
+                </div>
+              </div>
+            </template>
+
+            <!-- Card 2 (RAW items only): the pipeline that models the raw feed -->
+            <template x-if="m.kind === 'card' && m.card === 'pipeline' && journey.pipeline">
+              <div class="reco-card">
+                <div class="reco-head">
+                  <span class="reco-eyebrow">2 · Pipeline from the raw feed</span>
+                  <span class="badge-ok" x-show="journey.pipeline.validated">Validated: validate-only update completed</span>
+                  <span class="badge-bad" x-show="!journey.pipeline.validated">Did not validate</span>
+                </div>
+                <div class="reco-mvname" x-text="journey.pipeline.name"></div>
+                <div class="card-err" x-show="!journey.pipeline.validated"
+                     x-text="journey.pipeline.validation.error || 'The warehouse rejected the pipeline.'"></div>
+                <div class="reco-why">Only in raw files today. The pipeline models the feed as bronze, silver and gold, so the
+                  metric view and the outputs read governed tables, not files.</div>
+
+                <div class="reco-grp">
+                  <div class="reco-lbl">Source feed</div>
+                  <div class="mono text-[11px] mb-1" style="word-break: break-all;" x-text="journey.pipeline.source.path"></div>
+                  <div class="text-[12px] text-slate-600 mb-1">
+                    <span x-text="journey.pipeline.source.format.toUpperCase()"></span>
+                    <span x-show="journey.pipeline.source.files" x-text="' · ' + journey.pipeline.source.files + ' files'"></span>
+                  </div>
+                  <div class="reco-chips">
+                    <template x-for="c in journey.pipeline.source.columns" :key="c">
+                      <span class="reco-chip d mono text-[10px]" x-text="c"></span>
+                    </template>
+                  </div>
+                </div>
+
+                <div class="reco-grp">
+                  <div class="reco-lbl">Bronze, silver and gold</div>
+                  <div class="widget-row"><span class="dec dec-raw">Bronze</span><span class="mono" x-text="journey.pipeline.tables.bronze"></span></div>
+                  <div class="widget-row"><span class="dec dec-extend">Silver</span><span class="mono" x-text="journey.pipeline.tables.silver"></span></div>
+                  <div class="widget-row">
+                    <span class="dec dec-reuse">Gold</span>
+                    <template x-for="g in journey.pipeline.tables.gold" :key="g">
+                      <span class="mono" x-text="g"></span>
+                    </template>
+                  </div>
+                </div>
+
+                <div class="reco-grp" x-show="journey.pipeline.expectations.length">
+                  <div class="reco-lbl">Expectations (data quality in the pipeline)</div>
+                  <table class="reco-table">
+                    <thead><tr><th>Table</th><th>Expectation</th><th>Rule</th><th>On violation</th></tr></thead>
+                    <tbody>
+                      <template x-for="(e, i) in journey.pipeline.expectations" :key="i">
+                        <tr>
+                          <td class="mono" x-text="e.table"></td>
+                          <td x-text="e.name"></td>
+                          <td class="mono" x-text="e.constraint_sql"></td>
+                          <td><span class="sev" :class="e.action === 'drop' ? 'drop' : 'warn'" x-text="e.action === 'drop' ? 'drop row' : 'warn'"></span></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+
+                <details class="yaml-block">
+                  <summary>Show the pipeline SQL (Lakeflow Spark Declarative Pipelines)</summary>
+                  <pre x-text="journey.pipeline.sql"></pre>
+                </details>
+
+                <div class="reco-grp">
+                  <div class="reco-lbl">Validation</div>
+                  <div class="text-[12px]">
+                    <span x-show="journey.pipeline.validation.state"><b>State:</b> <span class="mono" x-text="journey.pipeline.validation.state"></span></span>
+                    <span x-show="journey.pipeline.validation.update_id"> · <b>Update:</b> <span class="mono" x-text="journey.pipeline.validation.update_id"></span></span>
+                    <span x-show="!journey.pipeline.validation.state && journey.pipeline.validated"> · validate-only update completed</span>
+                    <span x-show="journey.pipeline.validation.seconds"> · <span x-text="journey.pipeline.validation.seconds"></span> s on the warehouse</span>
+                  </div>
+                </div>
+
+                <div class="reco-choice">
+                  <button class="btn btn-primary"
+                          :disabled="busy || journey.pipeline.added || !journey.pipeline.validated || stage !== 'pipeline' || !!jobRunning()"
+                          @click="addPipeline()"
+                          x-text="journey.pipeline.added ? 'Added to spec' : 'Add to spec'"></button>
+                  <button class="btn btn-ghost text-[12px]" x-show="!journey.pipeline.validated && !journey.pipeline.added"
+                          :disabled="busy" @click="retry('pipeline')">Retry</button>
+                  <span class="text-[11px] text-slate-500" x-show="journey.pipeline.added">
+                    The pipeline builds the gold table at build time. Promote runs it in each environment.
+                  </span>
+                </div>
+              </div>
+            </template>
+
+            <!-- Card 3 (or 2): metric view for the gap -->
+            <template x-if="m.kind === 'card' && m.card === 'metric_view' && journey.metric_view">
+              <div class="reco-card">
+                <div class="reco-head">
+                  <span class="reco-eyebrow" x-text="cardNo('metric_view') + ' · Metric view for the gap'"></span>
+                  <span class="badge-ok" x-show="journey.metric_view.validated === true">Validated on the warehouse</span>
+                  <span class="badge-pending" x-show="journey.metric_view.validated === 'pending'">Validated at build</span>
+                  <span class="badge-bad" x-show="journey.metric_view.validated === false">Did not validate</span>
+                </div>
+                <div class="reco-mvname" x-text="journey.metric_view.name"></div>
+                <div class="card-err" x-show="journey.metric_view.validated === false"
+                     x-text="journey.metric_view.error || 'The warehouse rejected the definition.'"></div>
+                <div class="reco-why" x-show="journey.metric_view.validated === 'pending'">
+                  This view reads the pipeline's planned gold table, which does not exist until the pipeline has run.
+                  It is checked on the warehouse at build time, so the sample rows are not shown here.
+                </div>
+                <div class="reco-why">One definition in Unity Catalog. The Genie Agent and the dashboard both read it, so every number matches.</div>
+                <div class="reco-grp">
+                  <div class="reco-lbl">Measures</div>
+                  <div class="reco-chips">
+                    <template x-for="x in journey.metric_view.measures" :key="x">
+                      <span class="reco-chip m" x-text="x"></span>
+                    </template>
+                  </div>
+                </div>
+                <div class="reco-grp">
+                  <div class="reco-lbl">Dimensions</div>
+                  <div class="reco-chips">
+                    <template x-for="x in journey.metric_view.dimensions" :key="x">
+                      <span class="reco-chip d" x-text="x"></span>
+                    </template>
+                  </div>
+                </div>
+                <div class="reco-grp" x-show="sampleRows().length">
+                  <div class="reco-lbl">Sample rows (from the validation run)</div>
+                  <div style="overflow-x:auto">
+                    <table class="sample-table">
+                      <thead><tr><template x-for="c in sampleCols()" :key="c"><th x-text="c"></th></template></tr></thead>
+                      <tbody>
+                        <template x-for="(row, i) in sampleRows()" :key="i">
+                          <tr><template x-for="c in sampleCols()" :key="c"><td x-text="row[c]"></td></template></tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                <details class="yaml-block">
+                  <summary>Show the metric view YAML</summary>
+                  <pre x-text="journey.metric_view.yaml"></pre>
+                </details>
+                <div class="reco-choice">
+                  <button class="btn btn-primary"
+                          :disabled="busy || journey.metric_view.added || !mvOk() || stage !== 'metric_view' || !!jobRunning()"
+                          @click="addMetricView()"
+                          x-text="journey.metric_view.added ? 'Added to spec' : 'Add to spec'"></button>
+                  <button class="btn btn-ghost text-[12px]" x-show="journey.metric_view.validated === false && !journey.metric_view.added"
+                          :disabled="busy" @click="retry('metric_view')">Try again</button>
+                  <span class="text-[11px] text-slate-500" x-show="journey.metric_view.added">
+                    One definition: the agent and the dashboard both read it.
+                  </span>
+                </div>
+              </div>
+            </template>
+
+            <!-- Card 3: data quality -->
+            <template x-if="m.kind === 'card' && m.card === 'dq' && journey.dq">
+              <div class="reco-card">
+                <div class="reco-head">
+                  <span class="reco-eyebrow" x-text="cardNo('dq') + ' · Data quality'"></span>
+                  <span class="reco-cov" x-text="dqCountsText()"></span>
+                </div>
+
+                <div class="reco-lbl">Existing rules for the tables this reads (from the rules repo)</div>
+                <table class="reco-table" x-show="journey.dq.existing.length">
+                  <thead><tr><th>Table</th><th>Rule</th><th>SQL</th><th>Severity</th><th>Why</th><th>On</th></tr></thead>
+                  <template x-for="r in journey.dq.existing" :key="dqKey(r)">
+                    <tbody>
+                        <tr :class="r.enabled ? '' : 'off'">
+                          <td class="mono" x-text="r.table_name"></td>
+                          <td x-text="r.rule_name"></td>
+                          <td class="mono" x-text="r.constraint_sql"></td>
+                          <td><span class="sev" :class="r.severity" x-text="r.severity"></span></td>
+                          <td x-text="r.why"></td>
+                          <td>
+                            <input type="checkbox" :checked="r.enabled" :disabled="!dqOpen() || busy"
+                                   @change="dqFlip(r, $event.target)" :title="r.enabled ? 'Switch off (needs a reason)' : 'Switch on'">
+                          </td>
+                        </tr>
+                        <tr class="reason-row" x-show="dqPending[dqKey(r)]">
+                          <td colspan="6">
+                            <div class="flex gap-2 items-center flex-wrap">
+                              <input class="tf text-[12px]" style="flex:1 1 16rem;"
+                                     placeholder="Why switch this rule off? (required)"
+                                     x-model="dqReasons[dqKey(r)]">
+                              <button class="btn btn-primary text-[12px]" :disabled="busy || !(dqReasons[dqKey(r)] || '').trim()"
+                                      @click="dqConfirmOff(r)">Switch off</button>
+                              <button class="btn btn-ghost text-[12px]" @click="dqCancelOff(r)">Cancel</button>
+                            </div>
+                            <div class="card-err" x-show="dqErrors[dqKey(r)]" x-text="dqErrors[dqKey(r)]"></div>
+                          </td>
+                        </tr>
+                        <tr x-show="!r.enabled && r.disabled_reason">
+                          <td colspan="6" class="text-[11px] text-slate-500">
+                            Switched off: <span x-text="r.disabled_reason"></span>
+                          </td>
+                        </tr>
+                    </tbody>
+                  </template>
+                </table>
+                <div class="text-[12px] text-slate-500" x-show="!journey.dq.existing.length">No existing rules on these tables.</div>
+
+                <div class="reco-lbl">Proposed for the gap (tick to add)</div>
+                <div class="text-[12px] text-slate-500" x-show="!journey.dq.proposed.length">No gap rules proposed.</div>
+                <template x-for="p in journey.dq.proposed" :key="dqKey(p)">
+                  <div class="prop-row">
+                    <label class="flex gap-2 items-start cursor-pointer">
+                      <input type="checkbox" class="mt-1" :checked="p.accepted" :disabled="!dqOpen() || busy"
+                             @change="dqAccept(p, $event.target.checked, $event.target)">
+                      <div>
+                        <b class="text-[13px]" x-text="p.rule_name"></b>
+                        <span class="mono ml-1" x-text="p.table_name + ' · ' + p.constraint_sql"></span>
+                        <span class="sev ml-1" :class="p.severity" x-text="p.severity"></span>
+                        <div class="why" x-text="p.why"></div>
+                        <div class="why" x-show="p.accepted" x-text="'Rows that fail today: ' + p.violations_now"></div>
+                      </div>
+                    </label>
+                  </div>
+                </template>
+
+                <div class="reco-lbl">Add a rule in plain English</div>
+                <div class="flex gap-2">
+                  <input class="tf text-[13px]" x-model="customText" :disabled="!dqOpen() || busy"
+                         placeholder="e.g. rebate_pct must be under 20% on the sales lines"
+                         @keydown.enter.prevent="addCustomRule()">
+                  <button class="btn btn-ghost text-[12px] whitespace-nowrap" :disabled="!dqOpen() || busy || !customText.trim()"
+                          @click="addCustomRule()">Check and add</button>
+                </div>
+                <template x-for="(res, i) in dqResults" :key="i">
+                  <div class="dq-result" :class="res.status">
+                    <b x-text="res.status === 'accepted' ? 'Accepted' : 'Rejected'"></b>
+                    <span class="text-slate-600" x-text="' · ' + res.text"></span>
+                    <div x-show="res.status === 'accepted'" class="mono"
+                         x-text="res.rule ? (res.rule.table_name + ' · ' + res.rule.constraint_sql + ' · ' + res.violations_now + ' rows fail today') : ''"></div>
+                    <div x-show="res.status === 'rejected'" x-text="res.reason"></div>
+                  </div>
+                </template>
+
+                <div class="reco-choice">
+                  <button class="btn btn-primary" :disabled="!dqOpen() || busy" @click="saveDq()">Save DQ review</button>
+                  <span class="card-ok" x-show="journey.dq.review_id">
+                    Saved (<span class="mono" x-text="journey.dq.review_id.slice(0, 8)"></span>) in studio_control.dq_review
+                  </span>
+                </div>
+                <div class="card-err" x-show="dqError" x-text="dqError"></div>
+              </div>
+            </template>
+
+            <!-- Card 4: design (the Genie Agent and / or the dashboard, as asked) -->
+            <template x-if="m.kind === 'card' && m.card === 'design' && journey.design && designDraft">
+              <div class="reco-card">
+                <div class="reco-head">
+                  <span class="reco-eyebrow" x-text="cardNo('design') + ' · Design'"></span>
+                  <span class="reco-cov" x-show="journey.design_confirmed">Design confirmed</span>
+                </div>
+
+                <div class="reco-grp" x-show="designDraft.genie_agent">
+                  <div class="reco-lbl">Genie Agent</div>
+                  <label class="field">Title</label>
+                  <input class="tf text-[13px]" x-model="designDraft.genie_agent.title" :disabled="!designOpen()">
+                  <label class="field mt-2">Instructions</label>
+                  <textarea class="tf text-[12px]" rows="4" x-model="designDraft.genie_agent.instructions" :disabled="!designOpen()"></textarea>
+                  <div class="reco-lbl">Benchmarks: the question, the answer computed from the data, and the SQL that computed it</div>
+                  <template x-for="(b, i) in designDraft.genie_agent.benchmarks" :key="b.id">
+                    <div class="bench">
+                      <div class="bench-row">
+                        <input class="tf text-[12px]" x-model="b.question" :disabled="!designOpen()" placeholder="Question">
+                        <input class="tf text-[12px]" x-model="b.expected" :disabled="!designOpen()" placeholder="Expected answer">
+                        <button class="text-rose-600 font-bold px-1" :disabled="!designOpen()" @click="removeBench(i)" title="Remove">✕</button>
+                      </div>
+                      <details>
+                        <summary class="text-[11px] cursor-pointer" style="color: var(--dbx-navy-2);">SQL</summary>
+                        <pre x-text="b.sql"></pre>
+                      </details>
+                    </div>
+                  </template>
+                  <div class="reco-lbl">Reads from</div>
+                  <div class="chip-row">
+                    <template x-for="s in designDraft.genie_agent.data_sources" :key="s">
+                      <span class="reco-chip d mono text-[10px]" x-text="s"></span>
+                    </template>
+                  </div>
+                </div>
+
+                <div class="reco-grp" x-show="designDraft.dashboard">
+                  <div class="reco-lbl">Dashboard</div>
+                  <label class="field">Title</label>
+                  <input class="tf text-[13px]" x-model="designDraft.dashboard.title" :disabled="!designOpen()">
+                  <div class="reco-lbl">Widgets (queries ran once on the warehouse; widgets on a pipeline's planned tables are validated at build)</div>
+                  <template x-for="(pg, pi) in designDraft.dashboard.pages" :key="pi">
+                    <div class="text-[12px] mb-1.5">
+                      <b x-text="pg.name"></b>
+                      <template x-for="(w, wi) in pg.widgets" :key="wi">
+                        <div class="widget-row">
+                          <span class="reco-chip d" x-text="w.title"></span>
+                          <span class="text-[11px] text-slate-500" x-text="w.type"></span>
+                          <span :class="validClass(w.validated)" x-text="validText(w.validated)"></span>
+                          <button class="text-rose-600 font-bold px-1" :disabled="!designOpen()" @click="removeWidget(pi, wi)" title="Remove">✕</button>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+                  <div class="card-err" x-show="(journey.design.dropped || []).length">
+                    Left out: <span x-text="(journey.design.dropped || []).map(d => (d.item || d.title || d) + ' (' + (d.reason || 'failed') + ')').join('; ')"></span>
+                  </div>
+                  <div class="text-[11px] text-slate-500" x-show="(journey.design.warnings || []).length"
+                       x-text="(journey.design.warnings || []).join(' · ')"></div>
+                  <label class="field mt-2">Refresh</label>
+                  <input class="tf text-[12px]" x-model="designDraft.dashboard.refresh" :disabled="!designOpen()">
+                  <div class="reco-lbl">Filters</div>
+                  <div class="chip-row">
+                    <template x-for="f in designDraft.dashboard.filters" :key="f">
+                      <span class="reco-chip d text-[10px]" x-text="f"></span>
+                    </template>
+                  </div>
+                  <label class="flex items-start gap-2 mt-3 text-[12px] cursor-pointer">
+                    <input type="checkbox" class="mt-0.5" :checked="designDraft.dashboard.include_customer_names" @change="piiFlip($event.target)" :disabled="!designOpen() || busy">
+                    <span>Include customer names on the shared dashboard
+                      <span class="block text-[11px] text-slate-500">Off by default. Turning it on is refused: the Genie Agent
+                      answers by name, per user, with their own permissions.</span></span>
+                  </label>
+                </div>
+
+                <!-- Change requests: planned by dp_planner.design_change, the same checks and queries as the design -->
+                <div class="reco-grp" x-show="changeOpen() || jobRunningName('design_change') || jobError('design_change')">
+                  <div class="reco-lbl">Request a change</div>
+                  <div class="text-[11px] text-slate-500">Add, replace or remove a widget, add a column (dimension or
+                    measure) to a widget, or add a sample question, benchmark or instruction. Anything the data does not
+                    have is refused, with the closest thing it does have.</div>
+                  <div class="bench-row mt-1">
+                    <input class="tf text-[12px]" x-model="changeText" :disabled="!changeOpen() || busy"
+                           placeholder="e.g. add product type and sales count to the dashboard"
+                           @keydown.enter.prevent="requestChange()">
+                    <button class="btn btn-ghost" :disabled="!changeOpen() || busy || !changeText.trim()" @click="requestChange()">Request change</button>
+                    <span></span>
+                  </div>
+                  <div class="card-run mt-1" x-show="jobRunningName('design_change')">
+                    <span class="ops-spinner"></span>
+                    <span x-text="jobMessageFor('design_change')"></span>
+                  </div>
+                  <div class="card-err" x-show="jobError('design_change')" x-text="jobError('design_change')"></div>
+                </div>
+
+                <div class="reco-choice" x-show="designOpen()">
+                  <button class="btn btn-primary" :disabled="busy" @click="confirmDesign()">Confirm design</button>
+                </div>
+                <div class="card-err" x-show="designNote" x-text="designNote"></div>
+              </div>
+            </template>
+
+            <!-- Progress and retry for a card whose step is still running (or failed) -->
+            <template x-if="m.kind === 'card' && m.card !== '' && pendingFor(m.card)">
+              <div class="reco-card">
+                <span class="reco-eyebrow" x-text="pendingTitle(m.card)"></span>
+                <div class="card-run" x-show="jobRunningName(pendingJob(m.card))">
+                  <span class="ops-spinner"></span>
+                  <span x-text="jobMessageFor(pendingJob(m.card))"></span>
+                </div>
+                <div class="card-err" x-show="jobError(pendingJob(m.card))">
+                  <span x-text="jobError(pendingJob(m.card))"></span>
+                  <button class="btn btn-ghost text-[12px] ml-2" :disabled="busy" @click="retry(pendingJob(m.card))">Try again</button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <div x-show="busy || jobRunning()" class="chat-msg assistant">
+          <div class="chat-bubble assistant flex items-center gap-2">
+            <span class="ops-spinner"></span>
+            <span class="text-xs text-slate-500" x-text="busy ? 'Thinking…' : jobMessageFor(jobRunning())"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="examples" x-show="messages.length <= 1 && !sessionId">
+        <span class="lbl">Try an example:</span>
+        {% for e in scenarios %}
+        <button type="button" class="ex" :disabled="busy" data-ask="{{ e.ask|e }}" @click="useExample($el)">{{ e.label|e }}</button>
+        {% endfor %}
+      </div>
+      <div class="flex items-end gap-2 mt-2 border-t pt-2">
+        <textarea x-ref="box" x-model="draft" rows="2" class="tf font-normal text-[14px]" :disabled="busy"
+                  placeholder="Type your answer…"
+                  @keydown.enter.prevent="if (!$event.shiftKey) send()"></textarea>
+        <button class="btn btn-primary" :disabled="busy || !draft.trim()" @click="send()">Send</button>
+      </div>
+      <p class="text-[10px] text-slate-400 mt-1">Enter to send · Shift+Enter for newline</p>
+    </div>
+
+    <!-- RIGHT: what the grill captured, governance, SLA, and the data product summary -->
+    <div class="col-span-5 form-pane space-y-4">
+
+      <div class="card">
+        <h3>What it is for</h3>
+        <dl class="summary-dl">
+          <dt>Purpose</dt>
+          <dd x-text="(journey.need && journey.need.purpose) || 'Not captured yet'"></dd>
+          <dt>Outputs</dt>
+          <dd x-text="outputsText()"></dd>
+          <dt>Audience</dt>
+          <dd x-text="(journey.need && journey.need.audience) || 'Not captured yet'"></dd>
+          <dt>Questions</dt>
+          <dd>
+            <template x-for="(q, i) in ((journey.need && journey.need.questions) || [])" :key="i">
+              <div x-text="(i + 1) + '. ' + q"></div>
+            </template>
+            <span x-show="!((journey.need && journey.need.questions) || []).length">Not captured yet</span>
+          </dd>
+          <dt>Cadence</dt>
+          <dd x-text="(journey.need && journey.need.cadence) || 'Not captured yet'"></dd>
+        </dl>
+      </div>
+
+      <div class="card">
+        <h3>Governance <span class="text-[11px] font-normal text-slate-400">(standards gate)</span></h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label class="field">Data owner</label>
+            <input x-model="spec.governance_data_owner" class="tf text-[12px]">
+          </div>
+          <div>
+            <label class="field">Business owner</label>
+            <input x-model="spec.governance_business_owner" class="tf text-[12px]">
+          </div>
+          <div>
+            <label class="field">Domain</label>
+            <input x-model="spec.governance_domain" class="tf text-[12px]">
+          </div>
+          <div>
+            <label class="field">Classification</label>
+            <select x-model="spec.governance_classification" class="tf text-[12px]">
+              <option value="public">public</option>
+              <option value="internal">internal</option>
+              <option value="confidential">confidential</option>
+              <option value="restricted">restricted</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>SLA &amp; approvers</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label class="field">Mode</label>
+            <select x-model="spec.sla_mode" class="tf">
+              <option value="batch">Batch (scheduled)</option>
+              <option value="streaming">Streaming (continuous)</option>
+            </select>
+          </div>
+          <div>
+            <label class="field">Freshness (minutes)</label>
+            <input x-model.number="spec.sla_freshness_minutes" class="tf" type="number" min="5" step="5">
+          </div>
+          <div>
+            <label class="field">Schedule cron</label>
+            <input x-model="spec.sla_schedule_cron" class="tf font-mono text-[12px]" placeholder="0 7 * * 1">
+          </div>
+          <div>
+            <label class="field">Required approvers (comma)</label>
+            <input x-model="approversRaw" class="tf font-mono text-[12px]">
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Data product</h3>
+        <dl class="summary-dl">
+          <dt>Reuse</dt>
+          <dd x-text="reuseText()"></dd>
+          <dt>Pipeline</dt>
+          <dd class="mono" x-text="pipelineText()"></dd>
+          <dt>Metric view</dt>
+          <dd class="mono" x-text="metricViewText()"></dd>
+          <dt>Data quality</dt>
+          <dd x-text="dqCountsText() || 'Not reviewed yet'"></dd>
+          <dt>Genie Agent</dt>
+          <dd x-text="(journey.design && journey.design.genie_agent) ? journey.design.genie_agent.title : (needsOutput('genie_agent') ? 'Not designed yet' : 'Not asked for')"></dd>
+          <dt>Dashboard</dt>
+          <dd x-text="(journey.design && journey.design.dashboard) ? journey.design.dashboard.title : (needsOutput('dashboard') ? 'Not designed yet' : 'Not asked for')"></dd>
+          <dt>Approvers</dt>
+          <dd x-text="(spec.required_approvers || []).join(', ') || '-'"></dd>
+          <dt>Status</dt>
+          <dd x-text="stageLabel(stage)"></dd>
+        </dl>
+        <details class="mt-3">
+          <summary class="text-[12px] font-semibold cursor-pointer" style="color: var(--dbx-navy-2);">Spec JSON (data_product v3)</summary>
+          <pre class="mt-2" x-text="JSON.stringify(spec.data_product || {}, null, 2)"></pre>
+        </details>
+      </div>
+
+      <!-- Submit -->
+      <div class="card">
+        <div class="font-semibold text-slate-900">Ready when you are</div>
+        <div class="text-xs text-slate-600 mt-0.5"
+             x-text="readyToSubmit ? 'The cards are done and governance is confirmed. Click Submit to queue the request.' : (blockedText())"></div>
+        <div class="mt-3">
+          <button class="btn btn-primary" @click="submit()" :disabled="!readyToSubmit || submitting || (lastSubmit && lastSubmit.ok)"
+                  x-text="submitting ? 'Submitting…' : 'Submit request'"></button>
+        </div>
+        <div x-show="lastSubmit" class="text-sm mt-2"
+             :class="lastSubmit && lastSubmit.ok ? 'text-emerald-700' : 'text-rose-700'"
+             x-text="lastSubmit && lastSubmit.msg"></div>
+        <div x-show="lastSubmit && lastSubmit.ok" class="mt-2">
+          <a class="btn btn-ghost" :href="'/tracker?request_id=' + (lastSubmit && lastSubmit.id)">Open the request in the tracker →</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function intakePage() {
+  const STAGE_ORDER = ["grill", "reuse", "pipeline", "metric_view", "dq", "design", "governance", "ready"];
+  const STAGE_LABEL = {grill: "Grill", reuse: "What exists", pipeline: "Pipeline", metric_view: "Metric view",
+                       dq: "Data quality", design: "Design", governance: "Governance", ready: "Ready"};
+  const GREETING = "Tell me what you need, in plain English. I'll ask what it is for first, and " +
+                   "who uses it, before I check anything. Or try one of the examples above the box.";
+
+  return {
+    sessionId: null,
+    messages: [],        // {id, kind: 'text'|'card', role, html, label, content, card}
+    _seq: 0,
+    _turnSeq: 0,
+    draft: "",
+    busy: false,
+    stage: "grill",
+    journey: {jobs: {}, cards: []},  // full card state from the server
+    spec: {},            // spec_snapshot from the server (includes data_product)
+    approversRaw: "",
+    readyToSubmit: false,
+    submitting: false,
+    lastSubmit: null,
+    // DQ card state
+    customText: "",
+    dqResults: [],
+    dqPending: {},
+    dqReasons: {},
+    dqErrors: {},
+    dqError: "",
+    // design card state: a local draft, sent on confirm. Replaced only when the server's design changes.
+    designDraft: null,
+    designServerKey: "",
+    designNote: "",
+    changeText: "",
+    _pollTimer: null,
+    _booted: false,
+    showAllRelated: false,
+
+    init() {
+      // x-data + x-init can run twice in Alpine: guard so the greeting shows once.
+      if (this._booted) return;
+      this._booted = true;
+      this._pushMsg("assistant", GREETING, "", false);
+    },
+
+    // ---- stage / labels ----
+    stageLabel(s) { return STAGE_LABEL[s] || (s || ""); },
+    pillClass(s) {
+      const i = STAGE_ORDER.indexOf(s);
+      const cur = STAGE_ORDER.indexOf(this.stage);
+      if (cur > i) return "done";
+      if (cur === i) return "active";
+      return "";
+    },
+    dqOpen() { return this.stage === "dq" && !this.jobRunning(); },
+    designOpen() { return this.stage === "design" && !!this.designDraft && !this.jobRunning(); },
+    changeOpen() { return this.stage === "design" && !!this.journey.design && !this.journey.design_confirmed && !this.jobRunning(); },
+    // Card numbers follow the journey: the pipeline card only exists when a raw feed is in the reuse check.
+    pipelineNeeded() { return !!this.journey.pipeline_needed || !!this.journey.pipeline; },
+    cardNo(name) {
+      const p = this.pipelineNeeded() ? 1 : 0;
+      return {reuse: 1, pipeline: 2, metric_view: 2 + p, dq: 3 + p, design: 4 + p}[name] || "";
+    },
+    mvOk() { const v = this.journey.metric_view && this.journey.metric_view.validated; return v === true || v === "pending"; },
+    validClass(v) { return v === "pending" ? "badge-pending" : (v ? "badge-ok" : "badge-bad"); },
+    validText(v) { return v === "pending" ? "validated at build" : (v ? "validated" : "not validated"); },
+    async addPipeline() {
+      const res = await this._post("/api/intake/journey/pipeline/add", {session_id: this.sessionId});
+      if (!res.ok) this._pushMsg("system", "Error: " + res.error, "", false);
+    },
+    dqKey(r) { return r.table_name + "|" + r.rule_name; },
+    shortId(x) { return x && x.request_id ? x.request_id.slice(0, 8) : ""; },
+    relatedShown() {
+      const all = (this.journey.reuse && this.journey.reuse.related_assets) || [];
+      return this.showAllRelated ? all : all.slice(0, 6);
+    },
+    needsOutput(o) { return !!(this.journey.need && (this.journey.need.outputs || []).includes(o)); },
+    outputsText() {
+      const o = (this.journey.need && this.journey.need.outputs) || [];
+      if (!o.length) return "Not chosen yet";
+      return o.map(x => x === "dashboard" ? "Dashboard" : "Genie Agent").join(" and ");
+    },
+    dqCountsText() {
+      const c = this.journey.dq && this.journey.dq.counts;
+      if (!c) return "";
+      return c.kept + " of " + c.existing_total + " kept · " + c.added + " added · " + c.rejected + " not accepted (failed the column or data check)";
+    },
+    reuseCovText() {
+      const r = this.journey.reuse;
+      const raw = ((r && r.items) || []).filter(i => i.decision === "RAW").length;
+      if (!r) return "";
+      // RAW needs are not in the coverage %: say so, instead of a bare 0% covered.
+      return raw ? raw + " of " + r.items.length + " needs in raw files" : r.coverage_pct + "% covered";
+    },
+    assetText(n) {
+      if (n.decision === "RAW" && n.asset) {
+        const parts = String(n.asset).split("/").filter(Boolean);
+        return (parts[parts.length - 1] || n.asset) + " (raw feed)";
+      }
+      return n.asset || n.measure || "-";
+    },
+    reuseText() {
+      const r = this.journey.reuse;
+      if (!r) return "Not checked yet";
+      if (!r.buildable) return "Not buildable: data missing";
+      const raw = (r.items || []).filter(i => i.decision === "RAW").length;
+      const cov = raw ? raw + " of " + r.items.length + " needs only in raw files (pipeline)" : r.coverage_pct + "% already covered";
+      return cov + (r.decided === "agree" ? ", build agreed" : ", not decided");
+    },
+    metricViewText() {
+      const mv = this.journey.metric_view;
+      if (this.journey.mv_skipped) return "Not needed (all reused)";
+      if (!mv) return "Not built yet";
+      if (mv.added) return mv.name;
+      if (mv.validated === "pending") return "Validated at build, not added";
+      return mv.validated ? "Validated, not added" : "Not validated";
+    },
+    pipelineText() {
+      const p = this.journey.pipeline;
+      if (!p) return this.pipelineNeeded() ? "Not built yet" : "Not needed (everything is in the workspace)";
+      return p.added ? p.name : (p.validated ? "Validated, not added" : "Not validated");
+    },
+    blockedText() {
+      const r = this.journey.reuse;
+      if (r && !r.buildable) return "Submit is locked: the data for this ask is not in the catalog. Log the request instead.";
+      if (this.stage === "governance") return "Submit unlocks once you confirm governance. Reply 'confirm' in chat.";
+      return "Submit unlocks once the cards are done and governance is confirmed.";
+    },
+
+    // ---- background steps ----
+    jobRunning() {
+      const jobs = this.journey.jobs || {};
+      return Object.keys(jobs).find(k => jobs[k].status === "running") || "";
+    },
+    jobRunningName(name) { return !!name && !!(this.journey.jobs || {})[name] && this.journey.jobs[name].status === "running"; },
+    jobMessageFor(name) {
+      const j = (this.journey.jobs || {})[name];
+      return j ? (j.message + (j.elapsed_s ? " (" + j.elapsed_s + "s)" : "")) : "Working…";
+    },
+    jobError(name) {
+      const j = (this.journey.jobs || {})[name];
+      return j && j.status === "error" ? (j.error || "That step failed.") : "";
+    },
+    pendingFor(card) {
+      // A card with no data yet, whose step is still running or has failed.
+      const j = this.pendingJob(card);
+      if (!j) return false;
+      const has = {reuse: !!this.journey.reuse, pipeline: !!this.journey.pipeline, metric_view: !!this.journey.metric_view,
+                   dq: !!this.journey.dq, design: !!this.journey.design}[card];
+      return !has && (this.jobRunningName(j) || !!this.jobError(j));
+    },
+    pendingJob(card) {
+      return {reuse: "match", pipeline: "pipeline", metric_view: "metric_view", dq: "dq", design: "design"}[card] || "";
+    },
+    pendingTitle(card) {
+      const titles = {reuse: "What already exists", pipeline: "Pipeline from the raw feed",
+                      metric_view: "Metric view", dq: "Data quality", design: "Design"};
+      return titles[card] ? this.cardNo(card) + " · " + titles[card] : "";
+    },
+    _scheduleJobPoll() {
+      if (this._pollTimer || !this.sessionId || !this.jobRunning()) return;
+      this._pollTimer = setTimeout(async () => {
+        this._pollTimer = null;
+        try {
+          const r = await fetch("/api/intake/journey/" + this.sessionId);
+          if (r.ok) this._apply(await r.json());
+        } catch (e) { /* network blip: the next poll retries */ }
+        this._scheduleJobPoll();
+      }, 1500);
+    },
+
+    // ---- messages ----
+    _pushMsg(role, content, topic, numbered = true) {
+      this._seq += 1;
+      let html = (content || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      html = html.replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 bg-white rounded text-[12px]">$1</code>');
+      html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      html = html.replace(/\n/g, "<br>");
+      let label = "";
+      if (role === "assistant" && numbered) {
+        this._turnSeq += 1;
+        label = this._turnSeq + (topic ? " · " + topic : "");
+      }
+      this.messages.push({id: this._seq, kind: "text", role, html, label, content: content || "", card: ""});
+      this._scroll();
+    },
+    _pushCard(name) {
+      this._seq += 1;
+      this.messages.push({id: this._seq, kind: "card", role: "card", card: name, html: "", label: "", content: ""});
+    },
+    _ensureCards() {
+      // The server decides which cards exist (journey.cards): a card appears when its data or its running step does.
+      for (const name of (this.journey.cards || [])) {
+        if (this.messages.some(m => m.kind === "card" && m.card === name)) continue;
+        this._pushCard(name);
+      }
+    },
+    _scroll() {
+      this.$nextTick(() => {
+        if (this.$refs.chatLog) this.$refs.chatLog.scrollTop = this.$refs.chatLog.scrollHeight;
+      });
+    },
+
+    // Every server response goes through here: it updates the spec, the journey and the cards,
+    // and adds the assistant message if there is one.
+    _apply(data) {
+      this.sessionId = data.session_id || this.sessionId;
+      this.stage = data.stage || this.stage;
+      this.journey = data.journey || {jobs: {}, cards: []};
+      if (data.spec_snapshot) {
+        this.spec = JSON.parse(JSON.stringify(data.spec_snapshot));
+        this.approversRaw = (this.spec.required_approvers || []).join(", ");
+      }
+      this.readyToSubmit = !!data.ready_to_submit;
+      // Keep the analyst's design edits until the server's design itself changes.
+      if (this.journey.design) {
+        const key = JSON.stringify(this.journey.design);
+        if (key !== this.designServerKey) {
+          this.designServerKey = key;
+          this.designDraft = JSON.parse(key);
+        }
+      }
+      if (data.assistant_message) this._pushMsg("assistant", data.assistant_message, this.stageLabel(this.stage));
+      if (data.dq_result) this.dqResults.push(data.dq_result);
+      this._ensureCards();
+      this._scroll();
+      this._scheduleJobPoll();
+    },
+
+    _errText(data, status) {
+      if (data && typeof data.detail === "string") return data.detail;
+      if (data && Array.isArray(data.detail)) return data.detail.map(d => d.msg).join("; ");
+      return "HTTP " + status;
+    },
+    async _post(path, body) {
+      this.busy = true;
+      try {
+        const r = await fetch(path, {
+          method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) return {ok: false, error: this._errText(data, r.status)};
+        this._apply(data);
+        return {ok: true, data};
+      } catch (e) {
+        return {ok: false, error: e.message};
+      } finally {
+        this.busy = false;
+      }
+    },
+
+    // ---- chat ----
+    useExample(el) {
+      this.draft = el.dataset.ask || "";
+      this.$nextTick(() => { if (this.$refs.box) this.$refs.box.focus(); });
+    },
+    async send() {
+      const msg = this.draft.trim();
+      if (!msg || this.busy) return;
+      this._pushMsg("user", msg, "", false);
+      this.draft = "";
+      const res = await this._post("/api/intake/chat", {session_id: this.sessionId, user_message: msg});
+      if (!res.ok) this._pushMsg("system", "Error: " + res.error, "", false);
+    },
+
+    // ---- card 1: reuse ----
+    async decideReuse(decision) {
+      const res = await this._post("/api/intake/journey/reuse", {session_id: this.sessionId, decision});
+      if (!res.ok) this._pushMsg("system", "Error: " + res.error, "", false);
+    },
+    async logRequest() {
+      const res = await this._post("/api/intake/journey/log-request", {session_id: this.sessionId});
+      if (!res.ok) this._pushMsg("system", "Error: " + res.error, "", false);
+    },
+    async retry(job) {
+      const res = await this._post("/api/intake/journey/retry", {session_id: this.sessionId, job});
+      if (!res.ok) this._pushMsg("system", "Error: " + res.error, "", false);
+    },
+
+    // ---- card 2: metric view ----
+    sampleRows() { return (this.journey.metric_view && this.journey.metric_view.sample) || []; },
+    sampleCols() {
+      const r = this.sampleRows()[0];
+      return r ? Object.keys(r).slice(0, 8) : [];
+    },
+    async addMetricView() {
+      const res = await this._post("/api/intake/journey/metric-view/add", {session_id: this.sessionId});
+      if (!res.ok) this._pushMsg("system", "Error: " + res.error, "", false);
+    },
+
+    // ---- card 3: data quality ----
+    dqFlip(r, el) {
+      const k = this.dqKey(r);
+      if (!this.dqOpen() || this.busy) { el.checked = r.enabled; return; }
+      if (el.checked) {
+        // switching a rule back on needs no reason
+        this._dqToggle({table_name: r.table_name, rule_name: r.rule_name, enabled: true, reason: ""}, k, el);
+      } else {
+        // switching off needs a reason: keep it on until the analyst confirms
+        el.checked = true;
+        this.dqPending = {...this.dqPending, [k]: true};
+      }
+    },
+    dqConfirmOff(r) {
+      const k = this.dqKey(r);
+      this._dqToggle({table_name: r.table_name, rule_name: r.rule_name, enabled: false,
+                      reason: this.dqReasons[k] || ""}, k, null);
+    },
+    dqCancelOff(r) {
+      this.dqPending = {...this.dqPending, [this.dqKey(r)]: false};
+    },
+    async _dqToggle(body, k, el) {
+      const res = await this._post("/api/intake/journey/dq/toggle", {session_id: this.sessionId, ...body});
+      if (res.ok) {
+        this.dqPending = {...this.dqPending, [k]: false};
+        this.dqReasons = {...this.dqReasons, [k]: ""};
+        this.dqErrors = {...this.dqErrors, [k]: ""};
+      } else {
+        this.dqErrors = {...this.dqErrors, [k]: res.error};
+        if (el) el.checked = !body.enabled;
+      }
+    },
+    async dqAccept(p, checked, el) {
+      const res = await this._post("/api/intake/journey/dq/accept",
+        {session_id: this.sessionId, table_name: p.table_name, rule_name: p.rule_name, accepted: checked});
+      if (!res.ok) { el.checked = !checked; this.dqError = res.error; }
+      else if (res.data.dq_result && res.data.dq_result.status === "rejected") el.checked = false;
+    },
+    async addCustomRule() {
+      const text = this.customText.trim();
+      if (!text) return;
+      const res = await this._post("/api/intake/journey/dq/custom", {session_id: this.sessionId, text});
+      if (res.ok) this.customText = "";
+      else this.dqError = res.error;
+    },
+    async saveDq() {
+      this.dqError = "";
+      const res = await this._post("/api/intake/journey/dq/save", {session_id: this.sessionId});
+      if (!res.ok) this.dqError = res.error;
+    },
+
+    // ---- card 4: design ----
+    removeBench(i) { this.designDraft.genie_agent.benchmarks.splice(i, 1); },
+    removeWidget(pi, wi) { this.designDraft.dashboard.pages[pi].widgets.splice(wi, 1); },
+    async piiFlip(el) {
+      // Ticking "include customer names" is refused straight away (the server records the pushback,
+      // keeps the flag off and does NOT confirm the design).
+      if (!el.checked) { this.designDraft.dashboard.include_customer_names = false; return; }
+      const draft = JSON.parse(JSON.stringify(this.designDraft));
+      draft.dashboard.include_customer_names = true;
+      const res = await this._post("/api/intake/journey/design/confirm", {session_id: this.sessionId, design: draft});
+      el.checked = false;
+      this.designDraft.dashboard.include_customer_names = false;
+      this.designNote = res.ok ? "Refused: customer names stay off the shared dashboard (see the agent's reply). The Genie Agent answers per user with their own permissions."
+                               : res.error;
+    },
+    async requestChange() {
+      const text = this.changeText.trim();
+      if (!text) return;
+      this.designNote = "";
+      const res = await this._post("/api/intake/journey/design/change", {session_id: this.sessionId, text});
+      if (!res.ok) this.designNote = res.error;
+      else this.changeText = "";
+    },
+    async confirmDesign() {
+      this.designNote = "";
+      const res = await this._post("/api/intake/journey/design/confirm",
+        {session_id: this.sessionId, design: this.designDraft});
+      if (!res.ok) this.designNote = res.error;
+      else if (res.data.refused) this.designNote = "Refused: customer names stay off the shared dashboard. Confirm again to continue.";
+    },
+
+    // ---- submit ----
+    async submit() {
+      if (!this.readyToSubmit || this.submitting) return;
+      this.submitting = true;
+      this.lastSubmit = null;
+      const body = JSON.parse(JSON.stringify(this.spec));
+      body.required_approvers = this.approversRaw.split(",").map(s => s.trim()).filter(Boolean);
+      body.requested_by = body.governance_data_owner || "";
+      body.intake_confirmed = true;
+      body.intake_history = this.messages
+        .filter(m => m.kind === "text" && (m.role === "user" || m.role === "assistant") && (m.content || "").trim())
+        .map(m => ({role: m.role, content: m.content}));
+      body.data_product = this.spec.data_product || {};
+      try {
+        const r = await fetch("/api/requests", {
+          method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+        });
+        if (!r.ok) {
+          this.lastSubmit = {ok: false, msg: "Submit failed: " + r.status + " " + (await r.text()).slice(0, 200)};
+        } else {
+          const data = await r.json();
+          this.lastSubmit = {ok: true, id: data.request_id,
+            msg: "Queued as request " + data.request_id.slice(0, 8) + ". Open it in the tracker to initiate."};
+          if (this.sessionId) fetch("/api/intake/session/" + this.sessionId, {method: "DELETE"}).catch(() => {});
+        }
+      } catch (e) {
+        this.lastSubmit = {ok: false, msg: "Network error: " + e.message};
+      } finally {
+        this.submitting = false;
+      }
+    },
+  };
+}
+</script>
+{% endblock %}

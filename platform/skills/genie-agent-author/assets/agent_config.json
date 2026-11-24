@@ -1,0 +1,88 @@
+{
+  "_note": "Your company Genie Agents. Synthetic data for the show-and-tell. validation_status must be set to validated_read_only before an item is added to an agent.",
+  "agents": [
+    {
+      "display_name": "Margin & Pricing",
+      "description": "Gross margin, net revenue, price and discount leakage by category, branch and customer.",
+      "warehouse": "serverless SQL warehouse (vmohan_demo_catalog)",
+      "sources": ["vmohan_demo_catalog.cfo_workbench.mv_revenue_margin", "vmohan_demo_catalog.cfo_workbench.gold_dim_product", "vmohan_demo_catalog.cfo_workbench.gold_dim_customer", "vmohan_demo_catalog.cfo_workbench.gold_dim_branch"],
+      "text_instructions": [
+        "Use MEASURE() for every measure in vmohan_demo_catalog.cfo_workbench.mv_revenue_margin; do not sum raw amounts.",
+        "Gross Margin Pct is Gross Margin divided by Net Revenue. Gross Margin vs Plan Bps is negative when margin is below plan.",
+        "Product Category comes from the product dimension; Fasteners is one category.",
+        "Default period is the latest closed week (Order Week) unless the user names one.",
+        "Discount Leakage is the discount value on actual lines; rank accounts by it for leakage questions."
+      ],
+      "sample_questions": [
+        "What was our gross margin last week compared with plan?",
+        "Which product categories are below plan on margin?",
+        "Show the top 20 customers by discount leakage this quarter",
+        "How much net revenue did Fasteners make last month?"
+      ],
+      "example_sql": [
+        {
+          "question": "Gross margin vs plan by product category, latest week",
+          "sql": "SELECT `Product Category`, MEASURE(`Gross Margin Pct`) AS gm_pct, MEASURE(`Gross Margin vs Plan Bps`) AS gm_vs_plan_bps FROM vmohan_demo_catalog.cfo_workbench.mv_revenue_margin WHERE `Order Week` = DATE_TRUNC('WEEK', date_sub(current_date(), 7)) GROUP BY ALL ORDER BY gm_vs_plan_bps",
+          "validation_status": "pending_read_only_validation"
+        },
+        {
+          "question": "Discount leakage by customer, top 20, last quarter",
+          "sql": "SELECT `Customer Name`, MEASURE(`Discount Leakage`) AS discount_leakage FROM vmohan_demo_catalog.cfo_workbench.mv_revenue_margin WHERE `Order Date` >= ADD_MONTHS(DATE_TRUNC('QUARTER', current_date()), -3) AND `Order Date` < DATE_TRUNC('QUARTER', current_date()) GROUP BY ALL ORDER BY discount_leakage DESC LIMIT 20",
+          "validation_status": "pending_read_only_validation"
+        }
+      ],
+      "benchmarks": [
+        {
+          "question": "What is gross margin vs plan in basis points for the Fasteners category in the latest closed week?",
+          "expected_sql": "SELECT MEASURE(`Gross Margin vs Plan Bps`) FROM vmohan_demo_catalog.cfo_workbench.mv_revenue_margin WHERE `Product Category` = 'Fasteners' AND `Order Week` = '<latest closed week>' GROUP BY ALL",
+          "expected_answer": "-140 bps (synthetic)",
+          "evaluation_note": "Must use the measure, not a hand-computed margin. Must name the category and period."
+        },
+        {
+          "question": "What were total net revenue and gross margin percent for the latest closed week?",
+          "expected_sql": "SELECT MEASURE(`Net Revenue`), MEASURE(`Gross Margin Pct`) FROM vmohan_demo_catalog.cfo_workbench.mv_revenue_margin WHERE `Order Week` = '<latest closed week>' GROUP BY ALL",
+          "expected_answer": "Net revenue $27.4M (synthetic); gross margin 31.8% (synthetic)",
+          "evaluation_note": "Both figures from the same week; margin percent is not recomputed from rounded revenue."
+        }
+      ]
+    },
+    {
+      "display_name": "Working Capital",
+      "description": "DSO, open receivables, collections-risk exposure and inventory ageing.",
+      "warehouse": "serverless SQL warehouse (vmohan_demo_catalog)",
+      "sources": ["vmohan_demo_catalog.cfo_workbench.mv_working_capital", "vmohan_demo_catalog.cfo_workbench.mv_inventory_ageing"],
+      "text_instructions": [
+        "Use MEASURE() for every measure in the working-capital and inventory-ageing views.",
+        "DSO Days is the working-capital measure; show it beside the 42-day target, never inside the measure.",
+        "Collections Risk Exposure is open AR on invoices the collections-risk model flags HIGH; it is not a bad-debt provision.",
+        "Inventory Over 180 Days is the value of stock aged more than 180 days."
+      ],
+      "sample_questions": [
+        "What is our DSO this month against the 42 day target?",
+        "How much receivables are at collections risk?",
+        "How much inventory is older than 180 days?"
+      ],
+      "example_sql": [
+        {
+          "question": "DSO days and collections risk exposure, latest month",
+          "sql": "SELECT MEASURE(`DSO Days`) AS dso_days, MEASURE(`Collections Risk Exposure`) AS collections_risk FROM vmohan_demo_catalog.cfo_workbench.mv_working_capital WHERE `Invoice Month` = DATE_TRUNC('MONTH', current_date()) GROUP BY ALL",
+          "validation_status": "pending_read_only_validation"
+        }
+      ],
+      "benchmarks": [
+        {
+          "question": "What is DSO and how does it compare with the 42 day target?",
+          "expected_sql": "SELECT MEASURE(`DSO Days`) FROM vmohan_demo_catalog.cfo_workbench.mv_working_capital WHERE `Invoice Month` = '<latest closed month>' GROUP BY ALL",
+          "expected_answer": "47 days vs 42 day target (synthetic)",
+          "evaluation_note": "Agent must state the target comparison in words, not only the number."
+        },
+        {
+          "question": "How much receivables are at collections risk and how much inventory is over 180 days old?",
+          "expected_sql": "SELECT (SELECT MEASURE(`Collections Risk Exposure`) FROM vmohan_demo_catalog.cfo_workbench.mv_working_capital) AS collections_risk, (SELECT MEASURE(`Inventory Over 180 Days`) FROM vmohan_demo_catalog.cfo_workbench.mv_inventory_ageing) AS inventory_over_180",
+          "expected_answer": "Collections risk $6.2M; inventory over 180 days $4.1M (synthetic)",
+          "evaluation_note": "Multi-view question. Answer must name both views and keep the two figures separate."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1038 @@
+{% extends "_base.html" %}
+{% block title %}Connectors · {{ brand.name if brand else 'Databricks Pipeline Studio' }}{% endblock %}
+
+{% block head_extra %}
+<style>
+  .sys-card { border: 1px solid var(--border); border-radius: 0.7rem; background: #fff; padding: 0.8rem 0.9rem; }
+  .sys-logo { width: 30px; height: 30px; object-fit: contain; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 0.12rem 0.6rem; font-size: 0.74rem; }
+  .kv dt { color: var(--ink-dim); white-space: nowrap; }
+  .kv dd { color: var(--ink); margin: 0; font-weight: 600; }
+  .flow-step { border: 1px solid var(--border); border-radius: 0.5rem; background: var(--surface-alt);
+               padding: 0.45rem 0.65rem; font-size: 0.74rem; font-weight: 600; color: var(--ink); }
+  .flow-arrow { color: var(--dbx-navy); font-weight: 700; }
+
+  /* source rail */
+  .src-row { width: 100%; text-align: left; border: 1px solid var(--border); border-radius: 0.6rem;
+             background: #fff; padding: 0.6rem 0.7rem; cursor: pointer; transition: border-color 150ms, box-shadow 150ms; }
+  .src-row:hover { border-color: var(--dbx-navy); }
+  .src-row.sel { border-color: var(--dbx-navy); box-shadow: inset 3px 0 0 var(--dbx-navy); background: var(--surface-alt); }
+
+  /* dataset rows */
+  .ds-row { display: flex; align-items: center; gap: 0.6rem; width: 100%; text-align: left;
+            border: 1px solid var(--border); border-radius: 0.6rem; background: #fff;
+            padding: 0.6rem 0.75rem; cursor: pointer; transition: border-color 150ms; }
+  .ds-row:hover { border-color: var(--dbx-navy); }
+
+  /* editable column table */
+  .col-tbl { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+  .col-tbl th { text-align: left; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.05em;
+                color: var(--ink-dim); padding: 0.25rem 0.4rem; border-bottom: 1px solid var(--border); }
+  .col-tbl td { padding: 0.2rem 0.4rem; border-bottom: 1px solid var(--surface-alt); }
+  .col-tbl input.tf, .col-tbl select.tf { padding: 0.25rem 0.4rem; font-size: 0.8rem; }
+
+  .codeblk { background: #0E1B22; color: #D7E6EA; border-radius: 0.6rem; padding: 0.8rem 0.9rem;
+             font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.74rem;
+             line-height: 1.45; white-space: pre; overflow-x: auto; }
+  .codeblk code { color: inherit; }
+  .samp-tbl { width: 100%; border-collapse: collapse; font-size: 0.74rem; }
+  .samp-tbl th, .samp-tbl td { border: 1px solid var(--border); padding: 0.2rem 0.4rem; text-align: left;
+                               max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .samp-tbl th { background: var(--surface-alt); color: var(--ink-dim); font-weight: 700; }
+  .legend-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div x-data="connectorsPage()" x-init="init()" class="space-y-4">
+
+  <div class="flex items-start justify-between gap-3 flex-wrap">
+    <div>
+      <h1 class="text-2xl font-semibold text-slate-900">Connectors</h1>
+      <p class="text-sm text-slate-600 max-w-3xl">
+        Source connectors the Studio ingests from. <strong>Auto Loader</strong> sources point at a
+        Unity Catalog Volume landing zone — onboard each dataset (a directory of files) with an
+        agent-suggested config, preview the generated code, and test it before it becomes
+        <em>ready</em> to build pipelines on. <strong>Demo sources</strong> are the Postgres systems
+        the deployment provisions and seeds for you. <strong>Lakeflow Connect</strong> sources attach
+        an existing Unity Catalog connection for managed CDC from a database or SaaS app.
+      </p>
+    </div>
+    <button class="btn btn-primary shrink-0" @click="openAdd()">+ Add Auto&nbsp;Loader source</button>
+  </div>
+
+  <!-- status legend -->
+  <div class="text-[11px] text-slate-500 flex items-center gap-4 flex-wrap">
+    <span><span class="legend-dot" style="background:#C9D2D6"></span>new — discovered, not configured</span>
+    <span><span class="legend-dot" style="background:#E0B100"></span>configured — config saved + quick check passed</span>
+    <span><span class="legend-dot" style="background:#16A05B"></span>ready — deep test passed; usable in a request</span>
+  </div>
+
+  <!-- Add-source modal -->
+  <div x-show="showAdd" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4"
+       style="background: rgba(24,28,31,0.45);">
+    <div class="card max-w-lg w-full space-y-3" @click.outside="showAdd=false">
+      <h3 class="mb-0">Add Auto Loader source</h3>
+      <p class="text-[12.5px] text-slate-600">
+        Point at any Unity Catalog Volume (managed or external), or a sub-directory within one.
+        The datasets are the directories inside it.
+      </p>
+      <div>
+        <label class="field">Display name</label>
+        <input class="tf" x-model="addName" placeholder="e.g. UDP Landing Zone">
+      </div>
+      <div>
+        <label class="field">UC Volume path</label>
+        <input class="tf" x-model="addPath" placeholder="/Volumes/catalog/schema/landing">
+        <p class="text-[11px] text-slate-400 mt-1">The app service principal needs READ on this volume.</p>
+      </div>
+      <div x-show="addMsg" class="text-[12.5px]" :class="addErr ? 'text-rose-600':'text-emerald-700'" x-text="addMsg"></div>
+      <div class="flex justify-end gap-2 pt-1">
+        <button class="btn btn-ghost" @click="showAdd=false">Cancel</button>
+        <button class="btn btn-primary" :disabled="!addPath || addBusy" @click="createSource()"
+                x-text="addBusy ? 'Scanning…' : 'Create + scan'"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add-Lakeflow-Connect-source modal -->
+  <div x-show="showConnect" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4"
+       style="background: rgba(24,28,31,0.45);">
+    <div class="card max-w-2xl w-full space-y-3" @click.outside="showConnect=false">
+      <h3 class="mb-0">Add Lakeflow Connect source</h3>
+      <p class="text-[12.5px] text-slate-600">
+        Attach an <strong>existing Unity Catalog connection</strong>. The Studio never sees the
+        source credentials — UC holds them, and Lakeflow Connect ingests through the connection
+        into Bronze. Only connection types Lakeflow Connect can ingest from are listed.
+      </p>
+
+      <!-- step 1: pick the connection -->
+      <template x-if="!cxSel">
+        <div class="space-y-2">
+          <div>
+            <label class="field">Unity Catalog connection</label>
+            <input class="tf" x-model="cxQuery" @input.debounce.250ms="loadConnections()"
+                   placeholder="Search by name, type or host…">
+            <p class="text-[11px] text-slate-400 mt-1">
+              <span x-text="cxTotal"></span> ingestible connection(s) in this metastore.
+              <button class="hover:underline" style="color: var(--dbx-navy-2);"
+                      @click="loadConnections(true)">↻ Refresh</button>
+              <!-- Every Lakebase instance in the metastore gets an auto-created
+                   `internal-<uuid>` connection; on a shared metastore they
+                   outnumber the real sources 3:1, so they start hidden. -->
+              <span x-show="cxHiddenInternal || cxInternal">
+                ·
+                <button class="hover:underline" style="color: var(--dbx-navy-2);"
+                        @click="cxInternal = !cxInternal; loadConnections()"
+                        x-text="cxInternal
+                          ? 'hide auto-created Lakebase connections'
+                          : 'show ' + cxHiddenInternal + ' auto-created Lakebase connection(s)'"></button>
+              </span>
+            </p>
+          </div>
+          <div x-show="cxLoading" class="text-[12.5px] text-slate-500 py-2">Loading connections…</div>
+          <div x-show="!cxLoading && !connections.length" class="text-[12.5px] text-slate-500 py-2">
+            No matching connection. A platform admin registers these in Unity Catalog
+            (<code>CREATE CONNECTION</code>); they then appear here.
+          </div>
+          <div class="space-y-1" style="max-height: 320px; overflow-y: auto;">
+            <template x-for="c in connections" :key="c.name">
+              <button class="src-row" @click="pickConnection(c)">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="font-semibold text-slate-800 text-[14px]" x-text="c.name"></span>
+                  <span class="flex items-center gap-1.5 shrink-0">
+                    <span class="pill pill-pending" x-text="c.type_label"></span>
+                    <span x-show="c.attached" class="pill pill-succeeded">attached</span>
+                  </span>
+                </div>
+                <div class="text-[11px] text-slate-500 mt-0.5 truncate" x-text="c.host"></div>
+                <div class="text-[11px] text-slate-400 mt-0.5 truncate" x-show="c.comment" x-text="c.comment"></div>
+              </button>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <!-- step 2: choose schema + tables -->
+      <template x-if="cxSel">
+        <div class="space-y-3">
+          <div class="flex items-center justify-between gap-2 flex-wrap">
+            <div class="min-w-0">
+              <div class="font-semibold text-slate-900 text-[14px]" x-text="cxSel.name"></div>
+              <div class="text-[11px] text-slate-500 truncate">
+                <span x-text="cxSel.type_label"></span> · <span x-text="cxSel.host"></span>
+              </div>
+            </div>
+            <button class="btn btn-ghost text-[12px]" @click="cxSel=null">← choose another</button>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="field">Display name</label>
+              <input class="tf" x-model="cxName" placeholder="e.g. Pagila CDC">
+            </div>
+            <div>
+              <label class="field">Table prefix (logical system)</label>
+              <input class="tf" x-model="cxSystemKey" placeholder="e.g. pagila">
+              <p class="text-[11px] text-slate-400 mt-1">
+                Requests name tables <code x-text="(cxSystemKey||'prefix') + '.table'"></code>.
+              </p>
+            </div>
+          </div>
+
+          <!-- browsable: pick from federated metadata -->
+          <template x-if="cxBrowsable">
+            <div class="space-y-2">
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="field">Federated catalog</label>
+                  <select class="tf" x-model="cxCatalog" @change="loadSchemas()">
+                    <template x-for="c in cxCatalogs" :key="c"><option :value="c" x-text="c"></option></template>
+                  </select>
+                </div>
+                <div>
+                  <label class="field">Source schema</label>
+                  <select class="tf" x-model="cxSchema" @change="loadCxTables()">
+                    <option value="">Select a schema…</option>
+                    <template x-for="s in cxSchemas" :key="s"><option :value="s" x-text="s"></option></template>
+                  </select>
+                </div>
+              </div>
+              <div x-show="cxTablesLoading" class="text-[12.5px] text-slate-500">Listing tables…</div>
+              <div x-show="cxSchema && !cxTablesLoading">
+                <div class="flex items-center justify-between">
+                  <label class="field mb-0">Tables to ingest</label>
+                  <span class="text-[11px] text-slate-500">
+                    <span x-text="cxTables.length"></span> selected of <span x-text="cxAllTables.length"></span>
+                    · <button class="hover:underline" style="color: var(--dbx-navy-2);"
+                              @click="toggleAllCxTables()" x-text="cxTables.length === cxAllTables.length ? 'none' : 'all'"></button>
+                  </span>
+                </div>
+                <div class="mt-1 rounded border border-slate-200 p-2 space-y-1"
+                     style="max-height: 200px; overflow-y: auto;">
+                  <template x-for="t in cxAllTables" :key="t.name">
+                    <label class="flex items-start gap-2 text-[12.5px] cursor-pointer">
+                      <input type="checkbox" class="mt-0.5" :value="t.name" x-model="cxTables">
+                      <span class="min-w-0">
+                        <span class="font-medium text-slate-800" x-text="t.name"></span>
+                        <span class="text-slate-400" x-show="t.columns.length"
+                              x-text="' · ' + t.columns.length + ' cols'"></span>
+                      </span>
+                    </label>
+                  </template>
+                  <div x-show="!cxAllTables.length" class="text-[12px] text-slate-500">
+                    No tables visible in this schema.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <!-- not browsable: manual entry -->
+          <template x-if="cxBrowsable === false">
+            <div class="space-y-2">
+              <p class="text-[12px] rounded p-2.5" style="background: #FFF3C2; color: #7A6200;"
+                 x-text="cxReason"></p>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="field">Source database / catalog <span class="text-slate-400">(optional)</span></label>
+                  <input class="tf" x-model="cxSourceCatalog" placeholder="e.g. pagila">
+                </div>
+                <div>
+                  <label class="field">Source schema</label>
+                  <input class="tf" x-model="cxSchema" placeholder="e.g. public">
+                </div>
+              </div>
+              <div>
+                <label class="field">Tables (one per line)</label>
+                <textarea class="tf" rows="4" x-model="cxTablesRaw"
+                          placeholder="customer&#10;rental&#10;payment"></textarea>
+              </div>
+            </div>
+          </template>
+
+          <div x-show="cxMsg" class="text-[12.5px]"
+               :class="cxErr ? 'text-rose-600':'text-emerald-700'" x-text="cxMsg"></div>
+        </div>
+      </template>
+
+      <div class="flex justify-end gap-2 pt-1">
+        <button class="btn btn-ghost" @click="showConnect=false">Cancel</button>
+        <button x-show="cxSel" class="btn btn-primary"
+                :disabled="!cxCanAttach() || cxBusy" @click="attachConnection()"
+                x-text="cxBusy ? 'Attaching…' : 'Attach source'"></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-12 gap-4">
+
+    <!-- LEFT RAIL: Auto Loader sources + CDC context -->
+    <aside class="col-span-12 lg:col-span-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <h3 class="mb-0">Auto Loader sources</h3>
+        <span class="text-[11px] text-slate-500" x-text="sources.length + ' source(s)'"></span>
+      </div>
+
+      <div x-show="!sources.length" class="text-sm text-slate-500 card">
+        No Auto Loader sources yet. Click <strong>Add Auto Loader source</strong> and point it at your
+        landing-zone volume.
+      </div>
+
+      <template x-for="s in sources" :key="s.source_id">
+        <button class="src-row" :class="selectedSourceId === s.source_id ? 'sel' : ''" @click="selectSource(s.source_id)">
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-semibold text-slate-800 text-[14px]" x-text="s.name"></span>
+            <span class="pill pill-deployed" x-text="s.ready_count + ' ready'"></span>
+          </div>
+          <div class="text-[11px] text-slate-500 mt-0.5 truncate" x-text="s.volume_path"></div>
+          <div class="text-[11px] text-slate-400 mt-0.5">
+            <span x-text="s.dataset_count + ' dataset(s)'"></span>
+            <span x-show="s.new_count"> · <span x-text="s.new_count"></span> new</span>
+          </div>
+        </button>
+      </template>
+
+      <!-- Built-in demo sources (provisioned + seeded BY THE DEPLOYMENT).
+           These are neither Auto Loader sources nor attached UC connections, so
+           without this rail they had no representation on this page at all —
+           the deploy created them and the page implied nothing was connected. -->
+      <div class="pt-3 border-t border-slate-200" x-show="builtinSources.length">
+        <div class="flex items-center justify-between">
+          <h3 class="mb-0">Demo sources</h3>
+          <span class="text-[11px] text-slate-500" x-text="builtinSources.length + ' connected'"></span>
+        </div>
+        <p class="text-[11px] text-slate-400 mt-0.5 mb-2">
+          Postgres systems the <strong>deployment provisions and seeds</strong> — ready to build
+          from with no setup.
+        </p>
+
+        <template x-for="s in builtinSources" :key="s.key">
+          <button class="src-row mb-2" :class="selectedBuiltinKey === s.key ? 'sel' : ''"
+                  @click="selectBuiltin(s.key)">
+            <div class="flex items-center justify-between gap-2">
+              <span class="font-semibold text-slate-800 text-[14px]" x-text="s.label"></span>
+              <span class="pill shrink-0"
+                    :class="s.warning ? 'pill-pending' : (s.available ? 'pill-deployed' : 'pill-failed')"
+                    x-text="s.warning ? 'degraded' : (s.available ? s.table_count + ' table(s)' : 'unavailable')"></span>
+            </div>
+            <div class="text-[11px] text-slate-500 mt-0.5 truncate">
+              <code x-text="s.instance"></code>
+            </div>
+            <div class="text-[11px] text-slate-400 mt-0.5">
+              <span x-text="s.backend"></span> · schema <code x-text="s.schema"></code>
+              <span x-show="s.row_estimate"> · ~<span x-text="s.row_estimate.toLocaleString()"></span> rows</span>
+            </div>
+          </button>
+        </template>
+      </div>
+
+      <!-- Lakeflow Connect sources (attached UC connections) -->
+      <div class="pt-3 border-t border-slate-200">
+        <div class="flex items-center justify-between">
+          <h3 class="mb-0">Lakeflow Connect</h3>
+          <span class="text-[11px] text-slate-500" x-text="connectSources.length + ' attached'"></span>
+        </div>
+        <p class="text-[11px] text-slate-400 mt-0.5 mb-2">
+          Database / SaaS sources ingested via CDC through an existing
+          <strong>Unity Catalog connection</strong>.
+        </p>
+
+        <div x-show="!connectSources.length" class="text-[12.5px] text-slate-500 card mb-2">
+          No Lakeflow Connect sources attached yet.
+        </div>
+
+        <template x-for="s in connectSources" :key="s.source_id">
+          <button class="src-row" :class="selectedConnectId === s.source_id ? 'sel' : ''"
+                  @click="selectConnect(s.source_id)">
+            <div class="flex items-center justify-between gap-2">
+              <span class="font-semibold text-slate-800 text-[14px]" x-text="s.name"></span>
+              <span class="pill pill-deployed" x-text="(s.tables||[]).length + ' table(s)'"></span>
+            </div>
+            <div class="text-[11px] text-slate-500 mt-0.5 truncate">
+              <code x-text="s.connection_name"></code>
+            </div>
+            <div class="text-[11px] text-slate-400 mt-0.5">
+              <span x-text="s.connection_type || 'connection'"></span>
+              · prefix <code x-text="s.system_key"></code>
+            </div>
+          </button>
+        </template>
+
+        <button class="btn btn-ghost w-full mt-2 text-[13px]" @click="openAddConnect()">
+          + Add Lakeflow&nbsp;Connect source
+        </button>
+      </div>
+    </aside>
+
+    <!-- MAIN PANE -->
+    <section class="col-span-12 lg:col-span-8 space-y-4">
+
+      <!-- Lakeflow Connect source selected -->
+      <template x-if="selectedConnectId && connectMeta.source_id">
+        <div class="space-y-4">
+          <div class="card">
+            <div class="flex items-start justify-between gap-3 flex-wrap">
+              <div class="min-w-0">
+                <div class="font-semibold text-slate-900" x-text="connectMeta.name"></div>
+                <div class="text-[12px] text-slate-500 break-all">
+                  UC connection <code x-text="connectMeta.connection_name"></code>
+                  <span x-show="connectMeta.connection_type"> · <span x-text="connectMeta.connection_type"></span></span>
+                </div>
+                <div class="text-[11px] text-slate-400 mt-0.5">
+                  tables named <code x-text="connectMeta.system_key + '.<table>'"></code> in a request
+                  <span x-show="connectMeta.source_schema"> · source schema <code x-text="connectMeta.source_schema"></code></span>
+                </div>
+              </div>
+              <button class="btn btn-danger text-[13px] shrink-0" @click="detachConnect()">Detach</button>
+            </div>
+          </div>
+
+          <div class="card space-y-2">
+            <h3 class="mb-0">Tables offered to the build flow</h3>
+            <p class="text-[12px] text-slate-500">
+              Each becomes one Bronze streaming table
+              (<code x-text="connectMeta.system_key + '__<table>'"></code>) via a consolidated
+              Lakeflow Connect ingestion pipeline, then flows to Silver through the framework.
+            </p>
+            <template x-for="t in (connectMeta.tables||[])" :key="t">
+              <div class="ds-row">
+                <div class="min-w-0 flex-1">
+                  <div class="font-semibold text-slate-800 text-[14px]" x-text="t"></div>
+                  <div class="text-[11px] text-slate-500 mt-0.5">
+                    → Bronze <code x-text="connectMeta.system_key + '__' + t"></code>
+                  </div>
+                </div>
+                <span class="pill pill-succeeded shrink-0">ready</span>
+              </div>
+            </template>
+            <div x-show="!(connectMeta.tables||[]).length" class="text-sm text-slate-500 py-2">
+              No tables selected for this source.
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>How Lakeflow Connect ingestion works</h3>
+            <div class="flex flex-wrap items-center gap-2 mt-1">
+              <span class="flow-step">Source DB<br><span class="text-[10px] text-slate-500" x-text="connectMeta.connection_type || 'database'"></span></span>
+              <span class="flow-arrow">→</span>
+              <span class="flow-step">UC connection<br><span class="text-[10px] text-slate-500">credentials in UC</span></span>
+              <span class="flow-arrow">→</span>
+              <span class="flow-step">Lakeflow Connect<br><span class="text-[10px] text-slate-500">managed CDC</span></span>
+              <span class="flow-arrow">→</span>
+              <span class="flow-step">Bronze ST<br><span class="text-[10px] text-slate-500">one per table</span></span>
+              <span class="flow-arrow">→</span>
+              <span class="flow-step">Silver<br><span class="text-[10px] text-slate-500">typed + DQ</span></span>
+            </div>
+            <ul class="text-sm text-slate-700 mt-3 space-y-1 list-disc ml-5">
+              <li>The Studio <strong>never handles the source credentials</strong> — Unity Catalog does.</li>
+              <li>Ingestion is <strong>consolidated per connection</strong>: a table already ingested is reused, not re-ingested.</li>
+              <li>Reference these tables in a request as
+                  <code x-text="connectMeta.system_key + '.<table>'"></code>; they also appear in the
+                  New&nbsp;Request data browser.</li>
+            </ul>
+          </div>
+        </div>
+      </template>
+
+      <!-- Built-in demo source selected -->
+      <template x-if="selectedBuiltinKey && builtinMeta.key">
+        <div class="space-y-4">
+          <div class="card">
+            <div class="flex items-start justify-between gap-3 flex-wrap">
+              <div class="min-w-0">
+                <div class="font-semibold text-slate-900" x-text="builtinMeta.label"></div>
+                <div class="text-[12px] text-slate-600" x-text="builtinMeta.blurb"></div>
+                <div class="text-[11px] text-slate-400 mt-1">
+                  Lakebase instance <code x-text="builtinMeta.instance"></code> ·
+                  schema <code x-text="builtinMeta.schema"></code> ·
+                  tables named <code x-text="builtinMeta.key + '.<table>'"></code> in a request
+                </div>
+              </div>
+              <span class="pill shrink-0"
+                    :class="builtinMeta.warning ? 'pill-pending' : (builtinMeta.available ? 'pill-succeeded' : 'pill-failed')"
+                    x-text="builtinMeta.warning ? 'degraded' : (builtinMeta.available ? 'connected' : 'unavailable')"></span>
+            </div>
+          </div>
+
+          <!-- A degraded scan is a PERMISSION problem, not an empty source. Saying
+               so here is the whole point: the silent version of this cost a day. -->
+          <div x-show="builtinMeta.warning" class="card"
+               style="background:#FFF3C2; border-color:#E0B100;">
+            <h3 class="mb-1" style="color:#7A6200;">Connected, but columns are not readable</h3>
+            <p class="text-[12.5px]" style="color:#7A6200;" x-text="builtinMeta.warning"></p>
+          </div>
+
+          <div x-show="builtinMeta.error" class="card" style="background:#FEF2F2; border-color:#FCA5A5;">
+            <h3 class="mb-1 text-rose-700">Source unreachable</h3>
+            <p class="text-[12.5px] text-rose-700" x-text="builtinMeta.error"></p>
+          </div>
+
+          <div class="card space-y-2">
+            <div class="flex items-center justify-between gap-2">
+              <h3 class="mb-0">Tables available to the build flow</h3>
+              <button class="btn btn-ghost text-[12px]" :disabled="builtinBusy"
+                      @click="loadBuiltinSources(true)"
+                      x-text="builtinBusy ? 'Profiling…' : '↻ Re-profile'"></button>
+            </div>
+            <p class="text-[12px] text-slate-500">
+              Ingested to Bronze via Lakeflow Connect / CDC, then to Silver through the framework.
+              Reference them as <code x-text="builtinMeta.key + '.<table>'"></code>; they also appear
+              in the New&nbsp;Request data browser.
+            </p>
+            <template x-for="t in (builtinMeta.tables||[])" :key="t.name">
+              <div class="ds-row">
+                <div class="min-w-0 flex-1">
+                  <div class="font-semibold text-slate-800 text-[14px]" x-text="t.name"></div>
+                  <div class="text-[11px] text-slate-500 mt-0.5 truncate"
+                       x-text="(t.columns||[]).join(', ') || 'no columns readable'"></div>
+                </div>
+                <span class="text-[11px] text-slate-400 shrink-0 text-right">
+                  <span x-text="(t.approx_rows||0).toLocaleString()"></span> rows<br>
+                  <span x-text="t.column_count"></span> cols
+                </span>
+              </div>
+            </template>
+            <div x-show="!(builtinMeta.tables||[]).length" class="text-sm text-slate-500 py-2">
+              No tables discovered — the source may not be seeded yet.
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- empty state: educational -->
+      <template x-if="!selectedSourceId && !selectedConnectId && !selectedBuiltinKey">
+        <div class="space-y-4">
+          <div class="card">
+            <h3>How Auto Loader onboarding works</h3>
+            <p class="text-sm text-slate-700">
+              New vendor extracts land in a Unity Catalog Volume as files inside per-dataset directories
+              (simulating the Databricks ADLS2 landing zone). For each dataset you onboard the Auto Loader
+              config once; the Studio then ingests it into Bronze → Silver through the Lakeflow Framework.
+            </p>
+            <div class="flex flex-wrap items-center gap-2 mt-3">
+              <span class="flow-step">Landing volume<br><span class="text-[10px] text-slate-500">/Volumes/…</span></span>
+              <span class="flow-arrow">→</span>
+              <span class="flow-step">Dataset dir<br><span class="text-[10px] text-slate-500">files arrive</span></span>
+              <span class="flow-arrow">→</span>
+              <span class="flow-step">Suggest + test<br><span class="text-[10px] text-slate-500">→ ready</span></span>
+              <span class="flow-arrow">→</span>
+              <span class="flow-step">Auto Loader (cloudFiles)<br><span class="text-[10px] text-slate-500">Bronze ST</span></span>
+              <span class="flow-arrow">→</span>
+              <span class="flow-step">Silver<br><span class="text-[10px] text-slate-500">typed + DQ</span></span>
+            </div>
+            <ul class="text-sm text-slate-700 mt-3 space-y-1 list-disc ml-5">
+              <li><strong>Add a source</strong> pointing at any UC managed/external volume (or a sub-dir).</li>
+              <li><strong>Refresh</strong> to discover new dataset directories as they land.</li>
+              <li><strong>Suggest config</strong> — an agent profiles a sample and proposes the Auto Loader setup; tweak it freely.</li>
+              <li><strong>Test</strong> runs a real bounded <code>read_files()</code> on the warehouse; a pass marks the dataset <em>ready</em>.</li>
+            </ul>
+          </div>
+          <p class="text-sm text-slate-500">← Select an Auto Loader source to view its datasets.</p>
+        </div>
+      </template>
+
+      <!-- source selected -->
+      <template x-if="selectedSourceId">
+        <div class="space-y-4">
+
+          <!-- source header -->
+          <div class="card">
+            <div class="flex items-start justify-between gap-3 flex-wrap">
+              <div class="min-w-0">
+                <div class="font-semibold text-slate-900" x-text="sourceMeta.name"></div>
+                <div class="text-[12px] text-slate-500 break-all" x-text="sourceMeta.volume_path"></div>
+                <div class="text-[11px] text-slate-400 mt-0.5">
+                  <span x-text="(sourceMeta.dataset_count||0) + ' datasets'"></span> ·
+                  <span x-text="(sourceMeta.ready_count||0) + ' ready'"></span> ·
+                  <span x-text="(sourceMeta.new_count||0) + ' new'"></span>
+                </div>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <button class="btn btn-ghost text-[13px]" :disabled="refreshing" @click="refresh()"
+                        x-text="refreshing ? 'Refreshing…' : '↻ Refresh'"></button>
+                <button class="btn btn-danger text-[13px]" @click="deleteSource()">Remove</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- dataset list -->
+          <template x-if="!datasetSel">
+            <div class="card space-y-2">
+              <h3 class="mb-0">Datasets</h3>
+              <div x-show="!datasets.length" class="text-sm text-slate-500 py-2">
+                No dataset directories found under this path. Drop files into per-dataset sub-directories,
+                then <strong>Refresh</strong>.
+              </div>
+              <template x-for="d in datasets" :key="d.dataset">
+                <button class="ds-row" @click="openDataset(d.dataset)">
+                  <div class="min-w-0 flex-1">
+                    <div class="font-semibold text-slate-800 text-[14px]" x-text="d.dataset"></div>
+                    <div class="text-[11px] text-slate-500 mt-0.5">
+                      <span x-text="(d.file_count||0) + ' file(s)'"></span>
+                      <span x-show="d.config && d.config.columns"> · <span x-text="(d.config.columns||[]).length"></span> cols</span>
+                    </div>
+                  </div>
+                  <span class="pill shrink-0" :class="statusClass(d.status)" x-text="statusLabel(d.status)"></span>
+                  <span class="text-slate-300">→</span>
+                </button>
+              </template>
+            </div>
+          </template>
+
+          <!-- dataset config panel -->
+          <template x-if="datasetSel">
+            <div class="space-y-3">
+              <button class="text-[12px] hover:underline" style="color: var(--dbx-navy-2);" @click="backToDatasets()">← all datasets</button>
+
+              <div class="card space-y-3">
+                <div class="flex items-center justify-between gap-2 flex-wrap">
+                  <div>
+                    <div class="font-semibold text-slate-900 text-[15px]" x-text="datasetSel"></div>
+                    <div class="text-[11px] text-slate-500 break-all" x-text="(detail.landing_glob||'')"></div>
+                  </div>
+                  <span class="pill" :class="statusClass(detail.status)" x-text="statusLabel(detail.status)"></span>
+                </div>
+
+                <!-- file list -->
+                <div class="text-[11px] text-slate-500" x-show="detail.files && detail.files.length">
+                  Latest files:
+                  <template x-for="f in (detail.files||[]).slice(0,3)" :key="f.path">
+                    <span class="mr-2"><code x-text="f.name"></code></span>
+                  </template>
+                </div>
+
+                <!-- suggest -->
+                <div class="flex items-center gap-2 flex-wrap">
+                  <button class="btn btn-ghost text-[13px]" :disabled="suggesting" @click="suggest()"
+                          x-text="suggesting ? 'Analysing…' : '✨ Suggest config (agent)'"></button>
+                  <span class="text-[11px] text-slate-400">profiles a sample file + refines names/types</span>
+                </div>
+                <div x-show="rationale" class="text-[12.5px] rounded p-2.5"
+                     style="background: var(--dbx-mist); border: 1px solid var(--dbx-navy);">
+                  <div class="text-[10px] uppercase tracking-widest mb-1" style="color: var(--dbx-navy-2);">Agent rationale</div>
+                  <div class="text-slate-700" x-text="rationale"></div>
+                </div>
+
+                <!-- editable config -->
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <label class="field">cloudFiles format</label>
+                    <select class="tf" x-model="config.file_format">
+                      <option value="text">text (multi-char / custom delimiter)</option>
+                      <option value="csv">csv (single-char delimiter)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="field">Delimiter</label>
+                    <input class="tf" x-model="config.delimiter" placeholder="e.g. @$!~ or ,">
+                  </div>
+                </div>
+                <label class="inline-flex items-center gap-2 text-[13px] text-slate-700">
+                  <input type="checkbox" x-model="config.has_header"> File has a header row
+                </label>
+
+                <!-- columns -->
+                <div>
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="field mb-0">Columns (Bronze keeps all as STRING; type = Silver hint)</label>
+                    <button class="text-[12px] hover:underline" style="color: var(--dbx-navy-2);" @click="addColumn()">+ add column</button>
+                  </div>
+                  <table class="col-tbl">
+                    <thead><tr><th style="width:42%">Name</th><th style="width:30%">Silver type</th><th>JSON</th><th></th></tr></thead>
+                    <tbody>
+                      <template x-for="(c, i) in config.columns" :key="i">
+                        <tr>
+                          <td><input class="tf" x-model="c.name"></td>
+                          <td>
+                            <select class="tf" x-model="c.type">
+                              <template x-for="t in ['string','long','double','timestamp','boolean','date']" :key="t">
+                                <option :value="t" x-text="t"></option>
+                              </template>
+                            </select>
+                          </td>
+                          <td class="text-center"><input type="checkbox" x-model="c.is_json"></td>
+                          <td class="text-right"><button class="text-rose-500 text-xs" @click="config.columns.splice(i,1)">✕</button></td>
+                        </tr>
+                      </template>
+                      <tr x-show="!config.columns.length"><td colspan="4" class="text-slate-400 text-[12px] py-2">No columns yet — click ✨ Suggest config, or add columns manually.</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- actions -->
+                <div class="flex items-center gap-2 flex-wrap pt-1 border-t border-slate-100">
+                  <button class="btn btn-ghost text-[13px]" :disabled="previewing" @click="doPreview()"
+                          x-text="previewing ? '…' : '👁 Preview code'"></button>
+                  <button class="btn btn-ghost text-[13px]" :disabled="saving || !config.columns.length" @click="save()"
+                          x-text="saving ? 'Saving…' : 'Save config'"></button>
+                  <button class="btn btn-primary text-[13px]" :disabled="testing || !config.columns.length" @click="deepTest()"
+                          x-text="testing ? 'Testing…' : '▶ Test config → ready'"></button>
+                  <label class="btn btn-ghost text-[13px] cursor-pointer">
+                    ⤴ Upload sample
+                    <input type="file" class="hidden" @change="upload($event)">
+                  </label>
+                </div>
+                <div x-show="saveMsg" class="text-[12.5px]" :class="saveOk ? 'text-emerald-700':'text-rose-600'" x-text="saveMsg"></div>
+              </div>
+
+              <!-- code preview -->
+              <div x-show="preview.pyspark" class="card space-y-2">
+                <div class="flex items-center justify-between">
+                  <h3 class="mb-0">Auto Loader code preview</h3>
+                  <div class="text-[11px] text-slate-400">
+                    <button class="hover:underline" :class="previewTab==='pyspark'?'font-bold':''" @click="previewTab='pyspark'">PySpark</button> ·
+                    <button class="hover:underline" :class="previewTab==='dataflowspec'?'font-bold':''" @click="previewTab='dataflowspec'">Framework dataflowspec</button>
+                  </div>
+                </div>
+                <pre class="codeblk"><code x-text="previewTab==='pyspark' ? preview.pyspark : preview.dataflowspec"></code></pre>
+                <p class="text-[11px] text-slate-400">This is exactly what the Lakeflow Framework deploys for this config.</p>
+              </div>
+
+              <!-- deep test result -->
+              <div x-show="testResult.message || testResult.error" class="card space-y-2">
+                <div class="flex items-center gap-2">
+                  <h3 class="mb-0">Deep test (read_files)</h3>
+                  <span class="pill" :class="testResult.ok ? 'pill-succeeded':'pill-failed'" x-text="testResult.ok ? 'passed':'failed'"></span>
+                </div>
+                <div class="text-[12.5px] text-slate-700" x-text="testResult.message || testResult.error"></div>
+                <div x-show="testResult.sample_rows && testResult.sample_rows.length" class="overflow-x-auto">
+                  <table class="samp-tbl">
+                    <thead><tr><template x-for="c in (testResult.columns||[])" :key="c"><th x-text="c"></th></template></tr></thead>
+                    <tbody>
+                      <template x-for="(r, ri) in (testResult.sample_rows||[])" :key="ri">
+                        <tr><template x-for="(v, vi) in r" :key="vi"><td x-text="v"></td></template></tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+                <details x-show="testResult.query" class="text-[11px] text-slate-400">
+                  <summary class="cursor-pointer">query</summary>
+                  <pre class="codeblk mt-1"><code x-text="testResult.query"></code></pre>
+                </details>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+    </section>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function connectorsPage() {
+  return {
+    sources: [], defaultRoot: "",
+    selectedSourceId: null, sourceMeta: {}, datasets: [],
+    datasetSel: null, detail: {}, config: { file_format: "text", delimiter: "", has_header: true, columns: [] },
+    rationale: "", preview: {}, previewTab: "pyspark", testResult: {},
+    showAdd: false, addName: "", addPath: "", addBusy: false, addMsg: "", addErr: false,
+    refreshing: false, suggesting: false, previewing: false, saving: false, testing: false,
+    saveMsg: "", saveOk: false,
+
+    // --- built-in demo sources (provisioned + seeded by the deployment) ---
+    builtinSources: [], selectedBuiltinKey: null, builtinMeta: {}, builtinBusy: false,
+
+    // --- Lakeflow Connect: attached UC connections ---
+    connectSources: [], selectedConnectId: null, connectMeta: {},
+    showConnect: false, connections: [], cxTotal: 0, cxQuery: "", cxLoading: false,
+    cxInternal: false, cxHiddenInternal: 0,
+    cxSel: null, cxName: "", cxSystemKey: "", cxBrowsable: null, cxReason: "",
+    cxCatalogs: [], cxCatalog: "", cxSchemas: [], cxSchema: "", cxSourceCatalog: "",
+    cxAllTables: [], cxTables: [], cxTablesRaw: "", cxTablesLoading: false,
+    cxBusy: false, cxMsg: "", cxErr: false,
+
+    async init() {
+      await this.loadSources();
+      await this.loadConnectSources();
+      // Last, and never awaited-on by the others: profiling a database source can
+      // be slow (a cold Lakebase instance), and the Auto Loader rail must render
+      // regardless of whether the demo source answers.
+      await this.loadBuiltinSources();
+    },
+
+    async loadBuiltinSources(refresh = false) {
+      this.builtinBusy = true;
+      const { ok, data } = await this._json(
+        "/api/connectors/builtin-sources" + (refresh ? "?refresh=1" : ""),
+        { cache: "no-store" });
+      this.builtinBusy = false;
+      if (!ok) return;
+      this.builtinSources = data.sources || [];
+      if (this.selectedBuiltinKey) {
+        this.builtinMeta = this.builtinSources.find(s => s.key === this.selectedBuiltinKey) || {};
+      }
+    },
+
+    selectBuiltin(key) {
+      this.selectedBuiltinKey = key;
+      this.builtinMeta = this.builtinSources.find(s => s.key === key) || {};
+      // The three rails share one detail pane, so selecting here must clear the
+      // other two or two panes render at once.
+      this.selectedSourceId = null; this.sourceMeta = {}; this.datasets = [];
+      this.selectedConnectId = null; this.connectMeta = {};
+      this.datasetSel = null; this.resetDetail();
+    },
+
+    async _json(url, opts) {
+      const r = await fetch(url, opts);
+      let d = {}; try { d = await r.json(); } catch (e) {}
+      return { ok: r.ok, status: r.status, data: d };
+    },
+
+    async loadSources() {
+      const { ok, data } = await this._json("/api/connectors/sources", { cache: "no-store" });
+      if (ok) { this.sources = data.sources || []; this.defaultRoot = data.default_volume_root || ""; }
+    },
+
+    openAdd() { this.showAdd = true; this.addName = ""; this.addPath = this.defaultRoot || ""; this.addMsg = ""; this.addErr = false; },
+
+    async createSource() {
+      this.addBusy = true; this.addMsg = ""; this.addErr = false;
+      const { ok, data } = await this._json("/api/connectors/sources", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: this.addName, volume_path: this.addPath }),
+      });
+      this.addBusy = false;
+      if (!ok) { this.addErr = true; this.addMsg = data.detail || ("error " + (data.status||"")); return; }
+      this.showAdd = false;
+      await this.loadSources();
+      this.selectSource(data.source.source_id);
+    },
+
+    async selectSource(id) {
+      this.selectedSourceId = id; this.selectedConnectId = null; this.connectMeta = {};
+      this.selectedBuiltinKey = null; this.builtinMeta = {};
+      this.datasetSel = null; this.resetDetail();
+      await this.loadDatasets();
+    },
+
+    async loadDatasets() {
+      const { ok, data } = await this._json(`/api/connectors/sources/${this.selectedSourceId}/datasets`, { cache: "no-store" });
+      if (ok) { this.datasets = data.datasets || []; this.sourceMeta = data.source || {}; }
+    },
+
+    async refresh() {
+      this.refreshing = true;
+      const { ok, data } = await this._json(`/api/connectors/sources/${this.selectedSourceId}/refresh`, { method: "POST" });
+      this.refreshing = false;
+      if (ok) { this.datasets = data.datasets || []; this.sourceMeta = data.source || {}; await this.loadSources(); }
+      else { alert(data.detail || "refresh failed"); }
+    },
+
+    async deleteSource() {
+      if (!confirm("Remove this Auto Loader source and its dataset configs? (The volume + files are untouched.)")) return;
+      await fetch(`/api/connectors/sources/${this.selectedSourceId}`, { method: "DELETE" });
+      this.selectedSourceId = null; this.datasets = []; this.sourceMeta = {};
+      await this.loadSources();
+    },
+
+    resetDetail() { this.detail = {}; this.rationale = ""; this.preview = {}; this.testResult = {}; this.saveMsg = "";
+                    this.config = { file_format: "text", delimiter: "", has_header: true, columns: [] }; },
+
+    async openDataset(name) {
+      this.datasetSel = name; this.resetDetail();
+      const { ok, data } = await this._json(`/api/connectors/datasets/${this.selectedSourceId}/${encodeURIComponent(name)}`, { cache: "no-store" });
+      if (!ok) return;
+      this.detail = data;
+      if (data.config) { this.config = this.normalizeConfig(data.config); }
+      else { this.config = { dataset: name, landing_path: data.landing_glob || "", file_format: "text", delimiter: "", has_header: true, columns: [] }; }
+      if (data.suggestion && data.suggestion.rationale) this.rationale = data.suggestion.rationale;
+    },
+
+    normalizeConfig(c) {
+      return { dataset: c.dataset, landing_path: c.landing_path || (this.detail.landing_glob || ""),
+               file_format: c.file_format || "text", delimiter: c.delimiter || "",
+               has_header: c.has_header !== false, columns: (c.columns || []).map(x => ({ name: x.name, type: x.type || "string", is_json: !!x.is_json })) };
+    },
+
+    backToDatasets() { this.datasetSel = null; this.resetDetail(); this.loadDatasets(); },
+
+    addColumn() { this.config.columns.push({ name: "col_" + this.config.columns.length, type: "string", is_json: false }); },
+
+    async suggest() {
+      this.suggesting = true; this.saveMsg = "";
+      const { ok, data } = await this._json(`/api/connectors/datasets/${this.selectedSourceId}/${encodeURIComponent(this.datasetSel)}/suggest`, { method: "POST" });
+      this.suggesting = false;
+      if (!ok) { this.saveMsg = data.detail || "suggestion failed"; this.saveOk = false; return; }
+      if (data.config) this.config = this.normalizeConfig(data.config);
+      this.rationale = data.rationale || "";
+    },
+
+    async doPreview() {
+      this.previewing = true;
+      const { ok, data } = await this._json(`/api/connectors/datasets/${this.selectedSourceId}/${encodeURIComponent(this.datasetSel)}/preview`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: this.config }),
+      });
+      this.previewing = false;
+      if (ok) { this.preview = data; this.previewTab = "pyspark"; }
+      else { alert(data.detail || "preview failed"); }
+    },
+
+    async save() {
+      this.saving = true; this.saveMsg = "";
+      const { ok, data } = await this._json(`/api/connectors/datasets/${this.selectedSourceId}/${encodeURIComponent(this.datasetSel)}/config`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: this.config }),
+      });
+      this.saving = false;
+      this.saveOk = ok && data.ok;
+      this.saveMsg = ok ? (data.message + (data.ok ? " — saved as configured." : " — saved, but quick check failed.")) : (data.detail || "save failed");
+      if (ok && data.dataset) this.detail = { ...this.detail, status: data.dataset.status };
+    },
+
+    async deepTest() {
+      this.testing = true; this.testResult = {}; this.saveMsg = "";
+      const { ok, data } = await this._json(`/api/connectors/datasets/${this.selectedSourceId}/${encodeURIComponent(this.datasetSel)}/test`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: this.config }),
+      });
+      this.testing = false;
+      this.testResult = ok ? data : { error: (data.detail || "test failed") };
+      if (ok && data.dataset) { this.detail = { ...this.detail, status: data.dataset.status }; }
+    },
+
+    async upload(ev) {
+      const f = ev.target.files[0]; if (!f) return;
+      const fd = new FormData(); fd.append("file", f);
+      const r = await fetch(`/api/connectors/datasets/${this.selectedSourceId}/${encodeURIComponent(this.datasetSel)}/upload`, { method: "POST", body: fd });
+      ev.target.value = "";
+      if (r.ok) { this.saveMsg = "Sample uploaded."; this.saveOk = true; await this.openDataset(this.datasetSel); }
+      else { const d = await r.json().catch(()=>({})); this.saveMsg = d.detail || "upload failed"; this.saveOk = false; }
+    },
+
+    statusLabel(s) { return s || "new"; },
+    statusClass(s) { return s === "ready" ? "pill-succeeded" : (s === "configured" ? "pill-in_progress" : "pill-pending"); },
+
+    // --- Lakeflow Connect ----------------------------------------------------
+
+    async loadConnectSources() {
+      const { ok, data } = await this._json("/api/connectors/connect-sources", { cache: "no-store" });
+      if (ok) this.connectSources = data.sources || [];
+    },
+
+    selectConnect(id) {
+      this.selectedConnectId = id;
+      this.selectedSourceId = null; this.datasets = []; this.sourceMeta = {};
+      this.selectedBuiltinKey = null; this.builtinMeta = {};
+      this.datasetSel = null; this.resetDetail();
+      this.connectMeta = this.connectSources.find(s => s.source_id === id) || {};
+    },
+
+    openAddConnect() {
+      this.showConnect = true; this.cxSel = null; this.cxQuery = "";
+      this.cxMsg = ""; this.cxErr = false; this.cxBusy = false;
+      this.cxInternal = false;
+      this.loadConnections();
+    },
+
+    async loadConnections(refresh) {
+      this.cxLoading = true;
+      const qs = new URLSearchParams();
+      if (this.cxQuery) qs.set("q", this.cxQuery);
+      if (this.cxInternal) qs.set("internal", "1");
+      if (refresh) qs.set("refresh", "1");
+      const { ok, data } = await this._json("/api/connectors/connections?" + qs.toString(),
+                                            { cache: "no-store" });
+      this.cxLoading = false;
+      if (ok) {
+        // Cap the rendered list — a shared metastore can hold hundreds; the
+        // search box (server-side) is how you narrow it down.
+        this.connections = (data.connections || []).slice(0, 60);
+        this.cxTotal = data.total || 0;
+        this.cxHiddenInternal = data.hidden_internal || 0;
+      }
+    },
+
+    async pickConnection(c) {
+      this.cxSel = c;
+      this.cxName = c.name;
+      this.cxSystemKey = this._slugKey(c.name);
+      this.cxMsg = ""; this.cxErr = false;
+      this.cxCatalogs = []; this.cxCatalog = ""; this.cxSchemas = []; this.cxSchema = "";
+      this.cxAllTables = []; this.cxTables = []; this.cxTablesRaw = ""; this.cxSourceCatalog = "";
+      this.cxBrowsable = null; this.cxReason = "";
+      const { ok, data } = await this._json(
+        `/api/connectors/connections/${encodeURIComponent(c.name)}/browse`, { cache: "no-store" });
+      if (!ok) { this.cxBrowsable = false; this.cxReason = data.detail || "cannot browse this connection"; return; }
+      this.cxBrowsable = !!data.browsable;
+      this.cxReason = data.reason || "";
+      this.cxCatalogs = data.catalogs || [];
+      this.cxCatalog = data.catalog || (this.cxCatalogs[0] || "");
+      this.cxSchemas = data.schemas || [];
+    },
+
+    // Must match connect_store.slug_system_key server-side: a spec's tables are
+    // `system.table`, so the prefix can never contain a dot.
+    _slugKey(v) {
+      return (v || "").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "source";
+    },
+
+    async loadSchemas() {
+      this.cxSchema = ""; this.cxAllTables = []; this.cxTables = [];
+      if (!this.cxCatalog) return;
+      const { ok, data } = await this._json(
+        `/api/connectors/connections/${encodeURIComponent(this.cxSel.name)}/browse?catalog=`
+        + encodeURIComponent(this.cxCatalog), { cache: "no-store" });
+      if (ok) this.cxSchemas = data.schemas || [];
+    },
+
+    async loadCxTables() {
+      this.cxAllTables = []; this.cxTables = [];
+      if (!this.cxCatalog || !this.cxSchema) return;
+      this.cxTablesLoading = true;
+      const { ok, data } = await this._json(
+        `/api/connectors/connections/${encodeURIComponent(this.cxSel.name)}/browse?catalog=`
+        + encodeURIComponent(this.cxCatalog) + "&schema=" + encodeURIComponent(this.cxSchema),
+        { cache: "no-store" });
+      this.cxTablesLoading = false;
+      if (ok) this.cxAllTables = data.tables || [];
+    },
+
+    toggleAllCxTables() {
+      this.cxTables = this.cxTables.length === this.cxAllTables.length
+        ? [] : this.cxAllTables.map(t => t.name);
+    },
+
+    _cxTableList() {
+      return this.cxBrowsable
+        ? this.cxTables
+        : this.cxTablesRaw.split("\n").map(s => s.trim()).filter(Boolean);
+    },
+
+    cxCanAttach() {
+      return !!(this.cxSel && this.cxSystemKey && this._cxTableList().length);
+    },
+
+    async attachConnection() {
+      this.cxBusy = true; this.cxMsg = ""; this.cxErr = false;
+      const { ok, data } = await this._json("/api/connectors/connect-sources", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          connection_name: this.cxSel.name,
+          name: this.cxName,
+          system_key: this.cxSystemKey,
+          source_catalog: this.cxSourceCatalog,
+          source_schema: this.cxSchema,
+          browse_catalog: this.cxBrowsable ? this.cxCatalog : "",
+          tables: this._cxTableList(),
+        }),
+      });
+      this.cxBusy = false;
+      if (!ok) { this.cxErr = true; this.cxMsg = data.detail || "attach failed"; return; }
+      this.showConnect = false;
+      await this.loadConnectSources();
+      this.selectConnect(data.source.source_id);
+    },
+
+    async detachConnect() {
+      if (!confirm("Detach this Lakeflow Connect source from the generator? "
+                   + "(The Unity Catalog connection itself is untouched.)")) return;
+      await fetch(`/api/connectors/connect-sources/${this.selectedConnectId}`, { method: "DELETE" });
+      this.selectedConnectId = null; this.connectMeta = {};
+      await this.loadConnectSources();
+    },
+  };
+}
+</script>
+{% endblock %}

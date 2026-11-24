@@ -1,0 +1,18 @@
+Acme Corp request {{REF}} ({{PRODUCT}}), build step: create and run the Lakeflow Spark Declarative Pipeline {{PIPELINE_NAME}}. Use @medallion-sdp and @databricks-spark-declarative-pipelines.
+Work ONLY with the objects listed here. Do not modify any other pipeline, table, view, volume or dashboard. Do not ask questions.
+
+Create a NEW serverless SQL Spark Declarative Pipeline:
+- Name: {{PIPELINE_NAME}}. First check whether a pipeline with exactly this name already exists with this target. If it does, update that one and do not create a second pipeline with the same name.
+- Catalog: {{CATALOG}}. Target schema: {{TARGET_SCHEMA}}. Every table it creates lands in {{CATALOG}}.{{TARGET_SCHEMA}} and nowhere else.
+- Compute: serverless. Channel: CURRENT. Triggered, not continuous.
+- Source: the raw landing feed {{SOURCE_PATH}} (read-only). Do not read any other path.
+- Pipeline source: the reviewed SQL is already saved as the workspace file {{LIBRARY_PATH}}. Use THAT file as the pipeline's ONLY source library (libraries: [{file: {path: "{{LIBRARY_PATH}}"}}]). Do not copy it, edit it, or create another source file. For reference, the file contains:
+
+```sql
+{{PIPELINE_SQL}}
+```
+
+- Start one update with full refresh and wait until it finishes. The update must end COMPLETED. Then check that these tables exist in {{CATALOG}}.{{TARGET_SCHEMA}} and have rows: {{TABLES}}.
+- Share it: give the service principal with application id {{APP_SP}} CAN_MANAGE on the pipeline (PATCH /api/2.0/permissions/pipelines/<pipeline_id> with service_principal_name {{APP_SP}}). The app uses this identity to check and promote the pipeline.
+
+Finish with one line: PIPELINE_OK <pipeline_id>, or PIPELINE_FAILED <reason>.

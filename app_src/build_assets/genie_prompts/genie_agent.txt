@@ -1,0 +1,19 @@
+Acme Corp request {{REF}} ({{PRODUCT}}), build step: create the Genie Agent. Use @genie-agent-author and @business-glossary.
+Work ONLY with the objects listed here. Do not modify any other Genie space, table, view or dashboard. Do not ask questions.
+
+Create a NEW Genie space (Genie Agent):
+- Title: {{TITLE}}
+- Description: {{DESCRIPTION}}
+- SQL warehouse: {{WAREHOUSE_ID}}
+- Folder: {{FOLDER}}
+- Data sources (metric views only; query them with MEASURE()): {{DATA_SOURCES}}
+- Instructions (use this text as the agent instructions, word for word): "{{INSTRUCTIONS}}"
+- Sample questions (add each one exactly as written):
+{{SAMPLE_QUESTIONS}}
+- Benchmarks (add each question with its expected answer. Each has a check SQL: run it on the warehouse and confirm the numbers match the expected answer, and say which ones differ):
+{{BENCHMARKS}}
+- Do not add customer names or customer-level columns. Do not add raw gold or silver tables.
+
+- Share it: after creating the space, give the service principal with application id {{APP_SP}} CAN_MANAGE on it (PATCH /api/2.0/permissions/genie/<space_id> with service_principal_name {{APP_SP}}). The app uses this identity to check and promote the agent.
+
+Finish with one line: GENIE_SPACE_OK <space_id>, or GENIE_SPACE_FAILED <reason>.

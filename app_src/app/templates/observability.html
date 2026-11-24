@@ -1,0 +1,215 @@
+{% extends "_base.html" %}
+{% block title %}Observability · {{ brand.name if brand else 'Databricks Pipeline Studio' }}{% endblock %}
+
+{% block head_extra %}
+<style>
+  .trace-row { cursor: pointer; padding: 0.55rem 0.7rem; border-radius: 0.45rem;
+               border: 1px solid transparent; }
+  .trace-row:hover { background: #f1f5f9; }
+  .trace-row.selected { background: #fff3d6; border-color: var(--brand-orange); }
+  .waterfall { position: relative; width: 100%; padding-left: 0;
+               border-left: 2px solid #e2e8f0; }
+  .wf-row { display: grid; grid-template-columns: 220px 1fr 90px; gap: 0.4rem;
+            padding: 0.25rem 0; font-size: 0.78rem; align-items: center; }
+  .wf-name { color: #334155; font-family: ui-monospace, "SF Mono", monospace; font-size: 0.72rem;
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wf-bar-track { position: relative; height: 14px; background: #f1f5f9; border-radius: 3px; }
+  .wf-bar      { position: absolute; top: 0; bottom: 0; border-radius: 3px;
+                 box-shadow: inset 0 0 0 1px rgba(0,0,0,0.05);
+                 padding: 0 4px; font-size: 0.62rem; color: white; line-height: 14px;
+                 white-space: nowrap; overflow: hidden; }
+  .wf-bar.kind-SERVER   { background: #3b82f6; }
+  .wf-bar.kind-CLIENT   { background: #10b981; }
+  .wf-bar.kind-INTERNAL { background: #94a3b8; }
+  .wf-bar.kind-CONSUMER, .wf-bar.kind-PRODUCER { background: #a78bfa; }
+  .wf-bar.has-error { background: #dc2626 !important; }
+  .wf-dur { font-variant-numeric: tabular-nums; color: #64748b; text-align: right; }
+  .trace-status-err { color: #991b1b; }
+  .trace-status-ok  { color: #065f46; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div x-data="observabilityPage()" x-init="init()" class="space-y-4">
+
+  <div class="flex items-end justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-semibold text-slate-900">Observability</h1>
+      <p class="text-sm text-slate-600">
+        Distributed traces from the FastAPI app + LangGraph agent nodes.
+        Spans persist to <code>app_spans</code> in the control schema and are
+        rendered as a waterfall for each trace. For governance + on-call.
+      </p>
+    </div>
+    <div class="flex items-center gap-2">
+      <button class="btn btn-ghost" @click="refresh()">Refresh</button>
+    </div>
+  </div>
+
+  <div x-show="!health.available" class="card text-sm text-rose-700 bg-rose-50 border-rose-200" style="border:1px solid;">
+    Observability backend unavailable: <span x-text="health.reason || 'no warehouse'"></span>.
+    Traces are still being emitted to the console exporter (visible in App logs).
+  </div>
+
+  <div class="grid grid-cols-12 gap-4" x-show="health.available">
+
+    <!-- LEFT: trace list -->
+    <aside class="col-span-4 card">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="mb-0">Recent traces</h3>
+        <span class="text-[11px] text-slate-500" x-text="traces.length + ' traces'"></span>
+      </div>
+      <div x-show="!traces.length" class="text-sm text-slate-500">
+        No traces yet. Submit a request or hit any page — traces will appear here.
+      </div>
+      <div class="space-y-1">
+        <template x-for="t in traces" :key="t.trace_id">
+          <div class="trace-row" :class="selected && selected.trace_id === t.trace_id ? 'selected' : ''"
+               @click="selectTrace(t.trace_id)">
+            <div class="flex items-center justify-between gap-2">
+              <code class="text-[11px] text-slate-500" x-text="t.trace_id.slice(0,16)"></code>
+              <span class="text-[11px]" :class="t.had_error ? 'trace-status-err' : 'trace-status-ok'"
+                    x-text="t.had_error ? '⚠ error' : 'ok'"></span>
+            </div>
+            <div class="text-[12px] truncate text-slate-700 mt-1" x-text="t.sample_name || ''"></div>
+            <div class="text-[10px] text-slate-500 mt-0.5 flex items-center gap-2">
+              <span x-text="(t.started_at || '').toString().slice(11,19)"></span>
+              <span>·</span>
+              <span x-text="(t.span_count || 0) + ' spans'"></span>
+              <span x-show="t.request_id" class="font-mono"
+                    x-text="'· req ' + (t.request_id || '').slice(0,8)"></span>
+            </div>
+          </div>
+        </template>
+      </div>
+    </aside>
+
+    <!-- RIGHT: trace waterfall -->
+    <section class="col-span-8 space-y-4">
+      <div x-show="!selected" class="card text-sm text-slate-500">
+        Pick a trace on the left to see its span waterfall.
+      </div>
+      <template x-if="selected">
+        <div class="space-y-4">
+          <div class="card">
+            <div class="flex items-start justify-between">
+              <div>
+                <div class="text-xs text-slate-500">Trace</div>
+                <code class="text-[12px]" x-text="selected.trace_id"></code>
+              </div>
+              <div class="text-right">
+                <div class="text-xs text-slate-500">Spans</div>
+                <div class="text-lg font-semibold" x-text="spans.length"></div>
+              </div>
+              <div class="text-right">
+                <div class="text-xs text-slate-500">Total duration</div>
+                <div class="text-lg font-semibold" x-text="totalDurationMs() + ' ms'"></div>
+              </div>
+              <div class="text-right">
+                <div class="text-xs text-slate-500">Status</div>
+                <div class="text-lg font-semibold"
+                     :class="anyError() ? 'trace-status-err' : 'trace-status-ok'"
+                     x-text="anyError() ? '⚠ error' : 'ok'"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Span waterfall</h3>
+            <div class="waterfall">
+              <template x-for="(s, i) in spans" :key="s.span_id">
+                <div class="wf-row">
+                  <div class="wf-name" :title="s.name" x-text="s.name + (s.kind ? ' [' + s.kind + ']' : '')"></div>
+                  <div class="wf-bar-track">
+                    <div class="wf-bar"
+                         :class="(s.status === 'ERROR' ? 'has-error ' : '') + 'kind-' + (s.kind || 'INTERNAL')"
+                         :style="'left: ' + offsetPct(s) + '%; width: ' + widthPct(s) + '%;'"
+                         x-text="s.duration_ms + 'ms'"></div>
+                  </div>
+                  <div class="wf-dur" x-text="s.duration_ms + ' ms'"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Span detail</h3>
+            <div x-show="!hovered" class="text-sm text-slate-500">Hover a span row to inspect attributes.</div>
+            <template x-if="hovered">
+              <pre class="text-[11px] bg-slate-50 p-2 rounded overflow-auto" x-text="JSON.stringify(hovered, null, 2)"></pre>
+            </template>
+          </div>
+        </div>
+      </template>
+    </section>
+
+  </div>
+
+</div>
+
+<script>
+function observabilityPage() {
+  return {
+    health: {available: false, reason: "loading…"},
+    traces: [],
+    selected: null,
+    spans: [],
+    hovered: null,
+    _windowStart: 0,
+    _windowEnd: 1,
+
+    async init() {
+      await this.refresh();
+    },
+
+    async refresh() {
+      const h = await fetch("/api/observability/health");
+      if (h.ok) this.health = await h.json();
+      const t = await fetch("/api/observability/traces?limit=50");
+      if (t.ok) {
+        const data = await t.json();
+        this.traces = data.traces || [];
+      }
+    },
+
+    async selectTrace(trace_id) {
+      const r = await fetch("/api/observability/trace/" + trace_id);
+      if (!r.ok) return;
+      const data = await r.json();
+      this.selected = {trace_id};
+      this.spans = data.spans || [];
+      if (this.spans.length) {
+        const starts = this.spans.map(s => new Date(s.start_time).getTime());
+        const ends = this.spans.map(s => new Date(s.end_time).getTime());
+        this._windowStart = Math.min(...starts);
+        this._windowEnd = Math.max(...ends);
+      }
+    },
+
+    totalDurationMs() {
+      if (!this.spans.length) return 0;
+      return Math.max(0, this._windowEnd - this._windowStart);
+    },
+
+    anyError() {
+      return this.spans.some(s => s.status === "ERROR");
+    },
+
+    offsetPct(s) {
+      const total = this._windowEnd - this._windowStart;
+      if (total <= 0) return 0;
+      const off = new Date(s.start_time).getTime() - this._windowStart;
+      return Math.max(0, Math.min(100, (off / total) * 100));
+    },
+
+    widthPct(s) {
+      const total = this._windowEnd - this._windowStart;
+      if (total <= 0) return 1;
+      const dur = Math.max(1, s.duration_ms);
+      const pct = (dur / total) * 100;
+      return Math.max(0.5, Math.min(100, pct));
+    },
+  };
+}
+</script>
+{% endblock %}

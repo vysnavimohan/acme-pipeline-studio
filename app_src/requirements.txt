@@ -1,0 +1,19 @@
+fastapi>=0.115
+uvicorn[standard]>=0.32
+jinja2>=3.1
+python-multipart>=0.0.9
+pydantic==2.*
+databricks-sdk>=0.112.0
+databricks-sql-connector>=3.0.0
+psycopg[binary]>=3.2.0
+# The APP only needs langchain_core message classes (HumanMessage/SystemMessage).
+# The LangGraph agent + databricks-langchain run in the agent JOB, not the app —
+# keeping them OUT of the app keeps its build fast + reliable (the heavy
+# databricks-langchain -> mlflow-3 -> unitycatalog tree backtracks and blows the
+# 10-minute app-start window). The LLM client is a hand-rolled shim (agent/llm.py).
+langchain-core>=0.3.0
+pyyaml>=6.0
+httpx>=0.27.0
+# MLflow: intake-agent tracing into the shared agent experiment
+mlflow-skinny[databricks]>=2.19.0
+sqlglot>=25.0

@@ -1,0 +1,891 @@
+{% extends "_base.html" %}
+{% block title %}Request tracker · {{ brand.name if brand else 'Databricks Pipeline Studio' }}{% endblock %}
+
+{% block head_extra %}
+<style>
+  /* Vertical agent timeline */
+  .vlane { display: grid; grid-template-columns: 36px 1fr; gap: 0.7rem; }
+  .vlane-left { display: flex; flex-direction: column; align-items: center; position: relative; }
+  .vlane-dot {
+    width: 18px; height: 18px; border-radius: 50%;
+    border: 2px solid #ffffff; box-shadow: 0 0 0 1.5px var(--border-strong);
+    background: #EDF1F3;
+    z-index: 1; transition: background 250ms, box-shadow 250ms;
+  }
+  .vlane-dot.succeeded   { background: var(--dbx-navy); box-shadow: 0 0 0 1.5px var(--dbx-navy); }
+  .vlane-dot.in_progress { background: var(--dbx-orange); box-shadow: 0 0 0 1.5px var(--dbx-orange);
+                            animation: ops-pulse 1.8s ease-in-out infinite; }
+  .vlane-dot.awaiting    { background: var(--dbx-orange); box-shadow: 0 0 0 1.5px var(--dbx-orange);
+                            animation: ops-soft-pulse 1.8s ease-in-out infinite; }
+  .vlane-dot.failed      { background: #D7263D; box-shadow: 0 0 0 1.5px #D7263D; }
+  .vlane-dot.skipped     { background: #C9D2D6; }
+  .vlane-line { flex: 1 1 auto; width: 2px; background: var(--border); min-height: 16px;
+                transition: background 250ms; }
+  .vlane-line.done { background: var(--dbx-navy); }
+  .vlane-card { padding: 0.65rem 0.9rem; border: 1px solid var(--border); border-radius: 0.6rem;
+                background: #ffffff; transition: border-color 200ms, background 200ms; }
+  .vlane-card.active { border-color: var(--dbx-orange); background: #FFFBEA; }
+  .vlane-card.failed { border-color: #F3B6BE; background: #FEF5F6; }
+  .step-event { font-size: 0.81rem; color: #46555D; padding: 0.2rem 0;
+                border-left: 2px solid var(--border-strong); padding-left: 0.55rem; margin: 0.2rem 0; }
+  .step-event.in_progress { border-color: var(--dbx-orange); }
+  .step-event.succeeded   { border-color: var(--dbx-navy); }
+  .step-event.failed      { border-color: #D7263D; }
+  .step-event.skipped     { border-color: var(--border-strong); }
+  .step-event.human_comment { border-color: #7C5CD6; background: #F4F0FC; padding: 0.35rem 0.55rem;
+                              border-radius: 0.3rem; }
+
+  /* "How this was grilled" transcript */
+  .grill-log { display: flex; flex-direction: column; gap: 0.6rem; }
+  .grill-turn { display: flex; flex-direction: column; max-width: 82%; }
+  .grill-turn.user { align-self: flex-end; align-items: flex-end; }
+  .grill-turn.assistant { align-self: flex-start; align-items: flex-start; }
+  .grill-who { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em;
+               color: #94a3b8; margin-bottom: 0.15rem; }
+  .grill-bubble { font-size: 0.83rem; line-height: 1.4; padding: 0.5rem 0.7rem;
+                  border-radius: 0.6rem; white-space: pre-wrap; }
+  .grill-turn.user .grill-bubble { background: var(--dbx-navy, #1B3139); color: #fff;
+                  border-bottom-right-radius: 0.15rem; }
+  .grill-turn.assistant .grill-bubble { background: #F1F5F9; color: #1e293b;
+                  border-bottom-left-radius: 0.15rem; }
+
+  /* Request-list (left rail) */
+  .req-row { cursor: pointer; padding: 0.55rem 0.7rem; border-radius: 0.5rem;
+             border: 1px solid transparent; transition: background 150ms, border-color 150ms; }
+  .req-row:hover { background: var(--surface-alt); }
+  .req-row.selected { background: #FFF8DC; border-color: var(--dbx-orange); }
+
+  /* Pipeline lineage box */
+  #cy-pipeline { width: 100%; height: 380px; background: var(--surface-alt); border-radius: 0.6rem;
+                  border: 1px solid var(--border); }
+
+  /* Asset shortcut row */
+  .asset-row { display: grid; gap: 0.5rem;
+               grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .asset-btn {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.55rem 0.7rem; border-radius: 0.6rem;
+    background: #ffffff; border: 1px solid var(--border); text-decoration: none;
+    transition: all 150ms; font-size: 0.78rem; color: var(--ink);
+    min-width: 0;
+  }
+  .asset-btn:hover { border-color: var(--dbx-navy); background: var(--dbx-mist); }
+  .asset-btn.disabled { opacity: 0.4; pointer-events: none; }
+  .asset-btn .asset-icon { font-size: 1.1rem; flex: 0 0 auto; }
+  .asset-btn .asset-label { font-weight: 700; }
+  .asset-btn > div { min-width: 0; }
+  .asset-btn > div > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Acme Genie Code requests */
+  .pill-done { background: #E2F6EC; color: #0B6B3A; }
+  .genie-chip { display: inline-block; font-size: 0.7rem; padding: 0.1rem 0.45rem; border-radius: 999px;
+                background: #EEF4FF; color: #1A4F86; border: 1px solid #C9DBF5; }
+  .genie-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.9rem; padding: 0.5rem 0.7rem;
+               border: 1px solid var(--border); border-radius: 0.6rem; background: #ffffff; font-size: 0.8rem; }
+  .genie-row a { color: var(--dbx-navy-2); font-weight: 600; text-decoration: none; }
+  .genie-row a:hover { text-decoration: underline; }
+  .bench-table { width: 100%; font-size: 0.78rem; border-collapse: collapse; }
+  .bench-table th, .bench-table td { text-align: left; vertical-align: top; padding: 0.35rem 0.45rem;
+                                     border-bottom: 1px solid var(--border); }
+  .bench-table th { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: #64748b; }
+  .checklist-row { font-size: 0.8rem; padding: 0.25rem 0; }
+
+  /* MLflow run rows */
+  .mlrun-row { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem;
+               padding: 0.5rem 0.7rem; border: 1px solid var(--border); border-radius: 0.6rem;
+               background: #ffffff; font-size: 0.8rem; }
+  .mlrun-row .mlrun-links a { color: var(--dbx-navy-2); text-decoration: none; font-weight: 600;
+                              margin-left: 0.7rem; }
+  .mlrun-row .mlrun-links a:hover { text-decoration: underline; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div x-data="tracker()" x-init="init()" class="space-y-4">
+
+  <div class="flex items-end justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-semibold text-slate-900">Request tracker</h1>
+      <p class="text-sm text-slate-600">
+        Live progress for in-flight + completed agent runs.
+        <span x-show="polling" class="text-emerald-700">●&nbsp;polling</span>
+        <span x-show="!polling" class="text-slate-500">●&nbsp;idle</span>
+      </p>
+    </div>
+    <div class="flex items-center gap-2">
+      <button class="btn btn-ghost" @click="loadList(); selected && loadOne()">Refresh now</button>
+    </div>
+  </div>
+
+  <!-- KPI strip (same counters as the home dashboard) -->
+  <div class="grid grid-cols-3 md:grid-cols-7 gap-2">
+    <template x-for="kpi in kpis" :key="kpi.key">
+      <div class="card" style="padding: 0.6rem 0.8rem;">
+        <div class="text-[10px] uppercase tracking-widest text-slate-500" x-text="kpi.label"></div>
+        <div class="mt-1 text-2xl font-bold" :class="kpi.color" x-text="kpi.count"></div>
+      </div>
+    </template>
+  </div>
+
+  <div class="grid grid-cols-12 gap-4">
+
+    <!-- LEFT RAIL: request list -->
+    <aside class="col-span-3 card">
+      <h3>Requests</h3>
+      <div x-show="!requests.length" class="text-sm text-slate-500">No requests yet.</div>
+      <div class="space-y-1">
+        <template x-for="r in requests" :key="r.request_id">
+          <div class="req-row" :class="selected && selected.request_id === r.request_id ? 'selected' : ''"
+               @click="select(r.request_id)">
+            <div class="flex items-center justify-between gap-2">
+              <code class="text-[11px] text-slate-500" x-text="r.request_id.slice(0,8)"></code>
+              <span class="pill" :class="'pill-' + ((r.final_status || 'pending').replace(/[ -]/g,'_'))"
+                    x-text="displayStatus(r)"></span>
+            </div>
+            <div class="text-xs mt-1 truncate text-slate-700" x-text="r.intent || '(no intent)'"></div>
+            <div class="text-[10px] text-slate-500 mt-0.5" x-text="(r.submitted_at || '').toString().slice(0,16)"></div>
+          </div>
+        </template>
+      </div>
+    </aside>
+
+    <!-- RIGHT: selected request -->
+    <section class="col-span-9 space-y-4">
+
+      <div x-show="!selected" class="card text-slate-500 text-sm">
+        Pick a request from the list on the left, or
+        <a class="text-amber-600 underline" href="/request/new">submit a new one</a>.
+      </div>
+
+      <template x-if="selected">
+        <div class="space-y-4">
+
+          <!-- 1. STAGE FLOW (continuous chevron arrows) + headline -->
+          <div class="card">
+            <div class="flex items-start justify-between gap-4 mb-3">
+              <div>
+                <div class="text-xs text-slate-500">
+                  Request <code x-text="selected.request_id.slice(0,8)"></code>
+                  · submitted by <span x-text="selected.requested_by || '?'"></span>
+                  <span x-show="selected.assignee"> · owner
+                    <span class="font-semibold text-slate-700" x-text="selected.assignee"></span></span>
+                </div>
+                <div class="text-lg font-semibold text-slate-900 mt-0.5" x-text="selected.intent"></div>
+                <div x-show="isExample" class="text-[11px] text-amber-800 mt-0.5">
+                  Example (seeded on reset): a snapshot of a real run. View only: actions are disabled.</div>
+              </div>
+              <div class="flex flex-col items-end gap-1 shrink-0">
+                <span class="pill" style="white-space:nowrap;"
+                      :class="'pill-' + (statusKey() || 'pending')"
+                      x-text="statusLabel()"></span>
+                <span x-show="releaseLabel()" class="pill" style="white-space:nowrap;"
+                      :class="releaseKey() === 'released' ? 'pill-deployed' : 'pill-in_progress'"
+                      x-text="releaseLabel()"></span>
+                <div class="flex items-center justify-end gap-2 text-[11px] text-slate-500">
+                  <span>Human:</span>
+                  <span class="pill" style="white-space:nowrap;" :class="'pill-' + (selected.human_decision || 'pending')"
+                        x-text="selected.human_decision || 'pending'"></span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Spinning-up indicator: a manual action just launched a job run;
+                 there's a short delay before the next stage emits events. -->
+            <div x-show="launching"
+                 class="mb-3 flex items-center gap-2.5 text-sm rounded-md p-2.5"
+                 style="background: #FFFBEA; border: 1px solid var(--dbx-orange); color: #5C4A00;">
+              <span class="ops-spinner" style="width:15px;height:15px;"></span>
+              <span>Spinning up the serverless job run… the next stage will begin shortly.</span>
+            </div>
+            <!-- Chevron stage flow -->
+            <div class="stage-flow" x-show="!isQueued()">
+              <template x-for="(node, i) in AGENT_NODES" :key="node">
+                <div class="stage" :class="stageKind(node)" :title="node.replace(/_/g,' ')">
+                  <div class="stage-num">
+                    <span x-show="stageKind(node) === 'running'" class="ops-spinner" style="width:11px;height:11px;"></span>
+                    <span x-show="stageKind(node) === 'awaiting'">⏸</span>
+                    <span x-show="stageKind(node) === 'succeeded'">✓</span>
+                    <span x-show="stageKind(node) === 'failed'">✕</span>
+                    <span x-show="['pending','skipped'].includes(stageKind(node))" x-text="i+1"></span>
+                  </div>
+                  <div class="stage-label" x-text="stageShort(node)"></div>
+                </div>
+              </template>
+            </div>
+            <div x-show="isQueued() && !isGenie" class="text-sm text-slate-600 bg-amber-50 border border-amber-200 rounded-md p-3">
+              <strong class="text-amber-900">Queued — agent not yet started.</strong>
+              <div class="mt-1">Click <strong>Initiate agent</strong> below to begin.
+              The agent executes as a Databricks Job run — multiple requests can run concurrently.</div>
+            </div>
+            <div x-show="isQueued() && isGenie" class="text-sm text-slate-600 bg-amber-50 border border-amber-200 rounded-md p-3">
+              <strong class="text-amber-900">Queued — plan waiting for approval.</strong>
+              <div class="mt-1">Approve the plan below to dispatch the build to Genie Code.</div>
+            </div>
+          </div>
+
+          <!-- 2g. Queued Genie Code request: the plan the reviewer approves before any build -->
+          <div x-show="isQueued() && isGenie" class="card" style="border-color: var(--dbx-orange);">
+            <h3 class="text-amber-900">Plan: review, then approve to build</h3>
+            <p class="text-[12px] text-slate-600 -mt-1 mb-3">
+              Nothing is built until you approve. Each build step runs as a Genie Code job run; the app
+              checks the asset through the API before the next step. Two human gates: this plan, then the PR.
+            </p>
+            <div class="text-[12px] text-slate-700 mb-2">Builds: <strong x-text="outputsLabel()"></strong>. Nothing else is created.</div>
+            <div class="space-y-2">
+              <template x-for="(st, i) in plan" :key="st.key">
+                <div class="flex items-start gap-3 rounded border border-slate-200 p-2.5">
+                  <span class="pill pill-pending shrink-0" x-text="i + 1"></span>
+                  <div class="min-w-0 flex-1">
+                    <div class="text-[13px] font-semibold text-slate-800" x-text="st.title"></div>
+                    <div class="text-[11px] text-slate-500 mt-0.5">
+                      engine: <span class="font-semibold" x-text="st.engine === 'genie_code' ? 'Genie Code' : 'app'"></span>
+                      · target: <code x-text="st.asset"></code>
+                    </div>
+                    <div class="flex flex-wrap gap-1 mt-1.5">
+                      <template x-for="sk in (st.skills || [])" :key="sk">
+                        <span class="genie-chip" x-text="'@' + sk"></span>
+                      </template>
+                    </div>
+                  </div>
+                </div>
+              </template>
+              <div class="text-[11px] text-slate-500 px-1">
+                After the build: PR with artefacts and an AI review, your approval, then verify, staging and prod.
+              </div>
+            </div>
+            <div class="flex flex-wrap items-center gap-3 mt-3">
+              <label class="text-[12px] text-slate-600">Owner
+                <select class="tf ml-1" style="width:auto; display:inline-block;" x-model="assigneeChoice">
+                  <option value="">— select owner —</option>
+                  <template x-for="m in team" :key="m">
+                    <option :value="m" x-text="m" :selected="m === assigneeChoice"></option>
+                  </template>
+                </select>
+              </label>
+              <button class="btn btn-primary" @click="initiate()" x-show="!isExample"
+                      :disabled="busyInit || !assigneeChoice"
+                      x-text="busyInit ? 'Dispatching to Genie Code…' : 'Approve plan → dispatch to Genie Code'"></button>
+              <span x-show="initiateResult" class="text-sm" x-text="initiateResult"></span>
+            </div>
+          </div>
+
+          <!-- 2. Queued: Initiate button + similar-request check -->
+          <div x-show="isQueued() && !isGenie" class="card" style="border-color: var(--dbx-orange);">
+            <h3 class="text-amber-900">Awaiting initiation</h3>
+            <p class="text-[12px] text-slate-600 -mt-1 mb-2">
+              A lead reviews the queued request, assigns an owner, and initiates the build.
+            </p>
+            <div class="flex flex-wrap items-center gap-3">
+              <label class="text-[12px] text-slate-600">Assign to
+                <select class="tf ml-1" style="width:auto; display:inline-block;"
+                        x-model="assigneeChoice">
+                  <option value="">— select owner —</option>
+                  <template x-for="m in team" :key="m">
+                    <option :value="m" x-text="m" :selected="m === assigneeChoice"></option>
+                  </template>
+                </select>
+              </label>
+              <button class="btn btn-primary" @click="initiate()" x-show="!isExample"
+                      :disabled="busyInit || !assigneeChoice"
+                      x-text="busyInit ? 'Launching job run…' : '▶ Assign &amp; initiate agent'"></button>
+              <span x-show="initiateResult" class="text-sm" x-text="initiateResult"></span>
+            </div>
+
+            <!-- Similar / duplicate prior requests (AI) -->
+            <div class="mt-3 pt-3 border-t border-slate-100">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="text-[11px] uppercase tracking-widest text-slate-500">Similar prior requests</span>
+                <span x-show="similarBusy" class="ops-spinner teal" style="width:12px;height:12px;"></span>
+              </div>
+              <div x-show="!similarBusy && !similar.length" class="text-[12px] text-slate-500">
+                No similar deployed requests — this looks new.
+              </div>
+              <div class="space-y-1.5">
+                <template x-for="c in similar" :key="c.request_id">
+                  <div class="flex items-start gap-2 text-[12px] rounded p-2"
+                       :style="c.similarity === 'duplicate' ? 'background:#FDE7E9' : (c.similarity === 'high' ? 'background:#FFF3C2' : 'background:#F5F8F9')">
+                    <span class="pill shrink-0" :class="{
+                            'pill-failed': c.similarity==='duplicate',
+                            'pill-in_progress': c.similarity==='high',
+                            'pill-pending': c.similarity==='medium' || c.similarity==='low'}"
+                          x-text="c.similarity"></span>
+                    <div class="min-w-0 flex-1">
+                      <a class="font-semibold hover:underline" :href="'/tracker?request_id=' + c.request_id">
+                        <span x-text="(c.intent||'(no intent)').slice(0,90)"></span></a>
+                      <div class="text-[11px] text-slate-500" x-text="c.reason"></div>
+                      <div class="text-[10px] text-slate-400 mt-0.5">
+                        <span x-text="'→ ' + (c.target_table||'?')"></span>
+                        <span x-show="c.same_target_table" class="text-rose-600 font-semibold"> · same target name!</span>
+                        <span x-show="c.overlap_tables && c.overlap_tables.length"
+                              x-text="' · reuses ' + c.overlap_tables.length + ' source table(s): ' + c.overlap_tables.join(', ')"></span>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+              <p x-show="similar.length" class="text-[10px] text-slate-400 mt-1.5">
+                You can still initiate — each request gets its own pipeline. Overlapping source
+                tables are reused by the consolidated ingestion (no duplicate ingestion).
+              </p>
+            </div>
+          </div>
+
+          <!-- 3. REQUEST DETAILS (full spec) -->
+          <div class="card">
+            <h3>Request details</h3>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-[13px]">
+              <div>
+                <div class="text-[10px] uppercase tracking-wider text-slate-400">Source system</div>
+                <div class="font-mono" x-text="specView.source_system || '?'"></div>
+              </div>
+              <div class="col-span-2">
+                <div class="text-[10px] uppercase tracking-wider text-slate-400">Source tables</div>
+                <div class="font-mono text-[12px]" x-text="(specView.source_tables||[]).join(', ') || '?'"></div>
+              </div>
+              <div>
+                <div class="text-[10px] uppercase tracking-wider text-slate-400">SLA</div>
+                <div x-text="specView.sla_mode + ' / ' + (specView.sla_freshness_minutes || '?') + ' min'"></div>
+              </div>
+              <div>
+                <div class="text-[10px] uppercase tracking-wider text-slate-400">Target catalog</div>
+                <div class="font-mono text-[12px]" x-text="specView.target_catalog || '?'"></div>
+              </div>
+              <div>
+                <div class="text-[10px] uppercase tracking-wider text-slate-400">Target schema</div>
+                <div class="font-mono text-[12px]" x-text="specView.target_schema || '?'"></div>
+              </div>
+              <div>
+                <div class="text-[10px] uppercase tracking-wider text-slate-400">Target table</div>
+                <div class="font-mono text-[12px]" x-text="specView.target_table || '?'"></div>
+              </div>
+              <div>
+                <div class="text-[10px] uppercase tracking-wider text-slate-400">Write mode</div>
+                <div x-text="specView.target_write_mode || '?'"></div>
+              </div>
+              <div class="col-span-4">
+                <div class="text-[10px] uppercase tracking-wider text-slate-400">Transform</div>
+                <div x-text="specView.transform_description || '(none)'"></div>
+              </div>
+              <div class="col-span-2">
+                <div class="text-[10px] uppercase tracking-wider text-slate-400">Not-null / Unique</div>
+                <div class="text-[12px]" x-text="
+                  'not-null: ' + ((specView.validation_not_null||[]).join(',') || '(none)') +
+                  ' · unique: ' + ((specView.validation_unique||[]).join(',') || '(none)')"></div>
+              </div>
+              <div class="col-span-2">
+                <div class="text-[10px] uppercase tracking-wider text-slate-400">Approvers</div>
+                <div class="text-[12px]" x-text="(specView.required_approvers||[]).join(', ') || '(none)'"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3b. HOW THIS WAS GRILLED (intake conversation transcript) -->
+          <div class="card" x-show="grillTranscript && grillTranscript.length">
+            <h3>How this was grilled</h3>
+            <p class="text-[12px] text-slate-500 mb-2">
+              The intake agent grilled the requester to pin down the spec — vague
+              ask in, precise pipeline requirements out. Every turn ran through the
+              governed <code>ai_gov.default.claude_governed</code> endpoint.
+            </p>
+            <div class="grill-log">
+              <template x-for="(t, i) in grillTranscript" :key="i">
+                <div class="grill-turn" :class="t.role">
+                  <div class="grill-who" x-text="t.role === 'user' ? 'Requester' : 'Intake agent'"></div>
+                  <div class="grill-bubble" x-text="t.content"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- 4. LINEAGE (visible once initiated) -->
+          <div class="card" x-show="!isQueued()">
+            <h3>Pipeline lineage</h3>
+            <div id="cy-pipeline"></div>
+          </div>
+
+          <!-- 5. ASSET SHORTCUTS (visible once initiated) -->
+          <div class="card" x-show="!isQueued()">
+            <h3>Assets</h3>
+            <!-- Acme: built assets, each with its Genie Code conversation and job run -->
+            <div x-show="isGenie" class="space-y-2">
+              <template x-for="row in genieRows" :key="row.key">
+                <div class="genie-row">
+                  <span class="pill" :class="'pill-' + row.state" x-text="row.statusLabel"></span>
+                  <span class="font-semibold text-[13px]" x-text="row.label"></span>
+                  <code class="text-[11px] text-slate-500" x-text="row.env"></code>
+                  <a x-show="row.asset_url" :href="row.asset_url" target="_blank">Open asset ↗</a>
+                  <a x-show="row.conversation_url" :href="row.conversation_url" target="_blank">Open in Genie Code ↗</a>
+                  <a x-show="row.job_run_url" :href="row.job_run_url" target="_blank">Job run ↗</a>
+                  <span x-show="row.fallback" class="text-[11px] text-amber-800">fallback: created by the app, not Genie Code</span>
+                </div>
+              </template>
+              <div x-show="!genieRows.length" class="text-[12px] text-slate-500 italic">Nothing built yet.</div>
+              <div class="genie-row" x-show="selected.pr_number">
+                <span class="pill pill-pending" x-text="selected.final_status === 'done' ? 'merged' : 'open'"></span>
+                <span class="font-semibold text-[13px]" x-text="'PR #' + selected.pr_number"></span>
+                <a href="#" @click.prevent="openPrModal()">Open PR (artefacts + AI review) ↗</a>
+              </div>
+            </div>
+            <div class="asset-row" x-show="!isGenie">
+              <!-- PR: in-app mock widget (no external Git) when pr_url is app://… -->
+              <a class="asset-btn" :class="!selected.pr_url ? 'disabled' : ''"
+                 :href="isMockPr() ? '#' : (selected.pr_url || '#')"
+                 :target="isMockPr() ? '_self' : '_blank'"
+                 @click="if (isMockPr()) { $event.preventDefault(); openPrModal(); }">
+                <span class="asset-icon">🔀</span>
+                <div>
+                  <div class="asset-label">PR <span x-show="isMockPr()" class="text-[9px]" style="color:var(--dbx-navy-2);">· preview</span></div>
+                  <div class="text-[10px] text-slate-500"
+                       x-text="selected.pr_number ? '#' + selected.pr_number : 'pending'"></div>
+                </div>
+              </a>
+              <a class="asset-btn" :class="!assetUrls.ingest ? 'disabled' : ''"
+                 :href="assetUrls.ingest || '#'" target="_blank">
+                <span class="asset-icon">🔌</span>
+                <div>
+                  <div class="asset-label">Ingestion</div>
+                  <div class="text-[10px] text-slate-500" x-text="assetUrls.ingest_label || 'pending'"></div>
+                </div>
+              </a>
+              <a class="asset-btn" :class="!assetUrls.dev_pipeline ? 'disabled' : ''"
+                 :href="assetUrls.dev_pipeline || '#'" target="_blank">
+                <span class="asset-icon">🔧</span>
+                <div>
+                  <div class="asset-label">Dev pipeline</div>
+                  <div class="text-[10px] text-slate-500" x-text="assetUrls.dev_pipeline_label || 'pending'"></div>
+                </div>
+              </a>
+              <a class="asset-btn" :class="!assetUrls.dev_table ? 'disabled' : ''"
+                 :href="assetUrls.dev_table || '#'" target="_blank">
+                <span class="asset-icon">🗄️</span>
+                <div>
+                  <div class="asset-label">Dev silver</div>
+                  <div class="text-[10px] text-slate-500" x-text="assetUrls.dev_table_label || 'pending'"></div>
+                </div>
+              </a>
+              <a class="asset-btn" :class="!assetUrls.stage_pipeline ? 'disabled' : ''"
+                 :href="assetUrls.stage_pipeline || '#'" target="_blank">
+                <span class="asset-icon">🧪</span>
+                <div>
+                  <div class="asset-label">Staging pipeline</div>
+                  <div class="text-[10px] text-slate-500" x-text="assetUrls.stage_pipeline_label || 'pending'"></div>
+                </div>
+              </a>
+              <a class="asset-btn" :class="!assetUrls.stage_table ? 'disabled' : ''"
+                 :href="assetUrls.stage_table || '#'" target="_blank">
+                <span class="asset-icon">🗃️</span>
+                <div>
+                  <div class="asset-label">Staging silver</div>
+                  <div class="text-[10px] text-slate-500" x-text="assetUrls.stage_table_label || 'pending'"></div>
+                </div>
+              </a>
+              <a class="asset-btn" :class="!assetUrls.prod_pipeline ? 'disabled' : ''"
+                 :href="assetUrls.prod_pipeline || '#'" target="_blank">
+                <span class="asset-icon">🚀</span>
+                <div>
+                  <div class="asset-label">Prod pipeline</div>
+                  <div class="text-[10px] text-slate-500" x-text="assetUrls.prod_pipeline_label || 'pending (release)'"></div>
+                </div>
+              </a>
+              <a class="asset-btn" :class="!assetUrls.prod_table ? 'disabled' : ''"
+                 :href="assetUrls.prod_table || '#'" target="_blank">
+                <span class="asset-icon">📊</span>
+                <div>
+                  <div class="asset-label">Prod silver</div>
+                  <div class="text-[10px] text-slate-500" x-text="assetUrls.prod_table_label || 'pending (release)'"></div>
+                </div>
+              </a>
+              <a class="asset-btn" :class="!assetUrls.job ? 'disabled' : ''"
+                 :href="assetUrls.job || '#'" target="_blank">
+                <span class="asset-icon">⏰</span>
+                <div>
+                  <div class="asset-label">Schedule</div>
+                  <div class="text-[10px] text-slate-500" x-text="assetUrls.job_label || 'pending'"></div>
+                </div>
+              </a>
+              <a class="asset-btn" :class="!assetUrls.metric_view ? 'disabled' : ''"
+                 :href="assetUrls.metric_view || '#'" target="_blank">
+                <span class="asset-icon">📐</span>
+                <div>
+                  <div class="asset-label">Metric view</div>
+                  <div class="text-[10px] text-slate-500" x-text="assetUrls.metric_view_label || 'pending'"></div>
+                </div>
+              </a>
+              <a class="asset-btn" :class="!assetUrls.genie ? 'disabled' : ''"
+                 :href="assetUrls.genie || '#'" target="_blank">
+                <span class="asset-icon">🧞</span>
+                <div>
+                  <div class="asset-label">Genie space</div>
+                  <div class="text-[10px] text-slate-500" x-text="assetUrls.genie_label || 'pending'"></div>
+                </div>
+              </a>
+            </div>
+          </div>
+
+          <!-- 6. EXPERIMENT RUNS (MLflow) — under assets, above agent flow -->
+          <div class="card" x-show="!isQueued() && !isGenie">
+            <div class="flex items-center justify-between mb-2">
+              <h3 class="mb-0">Experiment runs · MLflow</h3>
+              <a x-show="mlflowRuns.length" class="text-[11px] text-amber-600 hover:underline"
+                 :href="mlflowRuns[0] && mlflowRuns[0].experiment_url" target="_blank">
+                Open experiment →
+              </a>
+            </div>
+            <div x-show="!mlflowRuns.length" class="text-[12px] text-slate-500 italic">
+              No MLflow runs yet — they appear when the agent job starts.
+            </div>
+            <div class="space-y-1.5">
+              <template x-for="(run, i) in mlflowRuns" :key="run.run_id || i">
+                <div class="mlrun-row">
+                  <div class="flex items-center gap-2 min-w-0">
+                    <span class="pill pill-deployed" x-text="run.mode"></span>
+                    <code class="text-[11px] text-slate-500 truncate"
+                          x-text="'run ' + (run.run_id || '').slice(0,8) + '…'"></code>
+                    <span class="text-[10px] text-slate-500" x-text="run.when"></span>
+                  </div>
+                  <div class="mlrun-links shrink-0">
+                    <a :href="run.run_url" target="_blank">MLflow run</a>
+                    <a :href="run.traces_url" target="_blank">Traces</a>
+                    <a x-show="run.job_run_url" :href="run.job_run_url" target="_blank">Job run</a>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- 7. AWAITING APPROVAL (flow paused at await_human) -->
+          <!-- 7g. Acme: awaiting approval (plan built; PR + AI review are in the PR modal) -->
+          <div class="card" x-show="statusKey() === 'pending_review' && isGenie"
+               style="border-color: var(--dbx-orange); background: #FFFBEA;">
+            <h3 class="text-amber-900 flex items-center gap-2">
+              <span class="ops-spinner" style="animation-duration: 2.5s;"></span>
+              Awaiting your approval — build is in dev
+            </h3>
+            <p class="text-sm text-slate-700 mb-2">
+              In dev and checked through the API: <span x-text="devBuiltLabel()"></span>. AI review:
+              <span class="pill" :class="aiReview && aiReview.verdict === 'approve' ? 'pill-succeeded' : 'pill-in_progress'"
+                    x-text="aiVerdictLabel()"></span>
+              <span x-show="aiReview && aiReview.verdict === 'request_changes'">
+                (<span x-text="aiFindingCount()"></span> checklist item(s) to change)</span>.
+              Open the PR to read the artefacts and the checklist.
+            </p>
+            <div class="flex flex-wrap items-center gap-3 mb-3">
+              <button class="btn btn-ghost" @click="openPrModal()">🔀 Open PR (artefacts + AI review)</button>
+            </div>
+            <div class="flex flex-wrap items-center gap-3">
+              <button class="btn btn-primary" @click="approve()" x-show="!isExample"
+                      x-text="aiReview && aiReview.verdict === 'request_changes'
+                              ? 'Approve anyway → verify, stage, promote to prod'
+                              : 'Approve → verify, stage, promote to prod'"></button>
+              <input class="tf" style="width:auto; min-width:14rem;" x-model="rejectNote"
+                     placeholder="Reason (optional, for rejects)">
+              <button class="btn btn-ghost" @click="reject()" x-show="!isExample">❌ Reject</button>
+              <span x-show="reviewResult" class="text-sm" x-text="reviewResult"></span>
+            </div>
+          </div>
+
+          <div class="card" x-show="statusKey() === 'pending_review' && !isGenie"
+               style="border-color: var(--dbx-orange); background: #FFFBEA;">
+            <h3 class="text-amber-900 flex items-center gap-2">
+              <span class="ops-spinner" style="animation-duration: 2.5s;"></span>
+              Awaiting approval — flow paused
+            </h3>
+            <p class="text-sm text-slate-700 mb-2">
+              The agent finished dev, opened the PR, posted its review, and <strong>stopped</strong>.
+              Nothing is polling — the flow resumes only when you act:
+            </p>
+            <!-- Mock PR (in-app) instructions -->
+            <ol x-show="isMockPr()" class="text-sm text-slate-700 list-decimal ml-5 mb-3 space-y-1">
+              <li><a class="text-amber-600 underline cursor-pointer" @click="openPrModal()">Open the PR preview</a>
+                  (PR #<span x-text="selected.pr_number"></span>) — review the generated files + the agent's review rounds.</li>
+              <li>Click <strong>"PR approved — deploy to staging"</strong> — the in-app approval IS the gate. Production promotion happens later via a release in Release&nbsp;Management.</li>
+            </ol>
+            <!-- Real GitHub instructions (only when OPS_PR_MODE=github) -->
+            <ol x-show="!isMockPr()" class="text-sm text-slate-700 list-decimal ml-5 mb-3 space-y-1">
+              <li>Open the PR on GitHub (<a class="text-amber-600 underline" :href="selected.pr_url" target="_blank">PR #<span x-text="selected.pr_number"></span></a>) and review.</li>
+              <li><strong>Approve the PR on GitHub</strong>.</li>
+              <li>Click <strong>"PR approved — deploy to staging"</strong> — this launches a fresh job run that verifies the approval and deploys to staging.</li>
+            </ol>
+            <div class="flex items-center gap-3">
+              <button class="btn btn-primary" @click="approve()" x-show="!isExample">✅ PR approved — deploy to staging</button>
+              <button class="btn btn-ghost" @click="reject()" x-show="!isExample">❌ Reject &amp; abandon</button>
+              <span x-show="reviewResult" class="text-sm" x-text="reviewResult"></span>
+            </div>
+          </div>
+
+          <!-- 7b. ON STAGING — awaiting a platform release to prod -->
+          <div class="card" x-show="selected.final_status === 'deployed' && (selected.release_status || 'staged') !== 'released'"
+               style="border-color: var(--dbx-navy); background: var(--dbx-mist);">
+            <h3 style="color: var(--dbx-navy-2);">🧪 Deployed to staging — awaiting production release</h3>
+            <p class="text-sm text-slate-700 mb-1">
+              The data-engineering flow is complete: this pipeline is running in <strong>staging</strong>.
+              The platform/ops team promotes staged requests to production together in a
+              <a class="underline" style="color: var(--dbx-navy-2);" href="/releases">release</a>.
+            </p>
+            <p class="text-[12px] text-slate-500" x-show="(selected.release_status || '') === 'releasing'">
+              A release is currently promoting this request to production…
+            </p>
+          </div>
+
+          <!-- 7h. ACME: USE IT (after prod) -->
+          <div class="card" x-show="isGenie && statusKey() === 'done'"
+               style="border-color: var(--dbx-navy); background: var(--dbx-mist);">
+            <h3 style="color: var(--dbx-navy-2);">Use it: released to prod</h3>
+            <div class="genie-row" style="margin-bottom:.6rem;">
+              <template x-for="row in genieRows.filter(r => r.env === 'prod')" :key="row.key">
+                <span class="flex items-center gap-2">
+                  <span class="font-semibold text-[13px]" x-text="row.label"></span>
+                  <a :href="row.asset_url" target="_blank">open ↗</a>
+                </span>
+              </template>
+            </div>
+            <div class="text-[12px] text-slate-600 mb-2" x-show="prodRelease && prodRelease.release_id">
+              Release <code x-text="prodRelease && prodRelease.release_id"></code> is listed on
+              <a class="underline" href="/releases">Release management</a>.
+            </div>
+            <div x-show="wantsAgent() && benchTable()">
+              <div class="text-[11px] uppercase tracking-widest text-slate-500 mb-1">
+                Benchmarks · <span x-text="benchTable() && benchTable().env === 'prod' ? 'prod Genie Agent' : 'dev Genie Agent (staging)'"></span>
+                · <span x-text="(benchTable() && benchTable().passed) + ' of ' + (benchTable() && benchTable().total) + ' numeric pass'"></span>
+              </div>
+              <table class="bench-table">
+                <thead><tr><th style="width:26%">Question</th><th style="width:30%">Expected</th><th>Genie answer</th><th style="width:10%">Result</th></tr></thead>
+                <tbody>
+                  <template x-for="(row, i) in (benchTable() ? benchTable().rows : [])" :key="i">
+                    <tr>
+                      <td x-text="row.question"></td>
+                      <td x-text="row.expected"></td>
+                      <td>
+                        <div x-text="row.got"></div>
+                        <div class="text-[11px] text-slate-500" x-show="row.live" x-text="'live: ' + row.live"></div>
+                        <a x-show="row.conversation_url" :href="row.conversation_url" target="_blank" class="text-[11px]">open conversation ↗</a>
+                      </td>
+                      <td><span class="pill" :class="benchClass(row)" x-text="benchLabel(row)"></span></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+            <div x-show="wantsAgent() && !benchTable()" class="text-[12px] text-slate-500 italic">No benchmark run recorded.</div>
+          </div>
+
+          <!-- 8. BLOCKED on PR approval -->
+          <!-- 8g. ACME: BLOCKED (the build stopped at a gate; nothing is promoted) -->
+          <div class="card" x-show="isGenie && selected.final_status === 'blocked_on_pr_approval'"
+               style="border-color: #F3B6BE; background: #FEF5F6;">
+            <h3 class="text-rose-800">Blocked: the build stopped at a gate</h3>
+            <p class="text-sm text-slate-700 mt-1 mb-2">
+              Nothing is promoted from this request until the gate is cleared. The last event says why:
+            </p>
+            <pre class="bg-rose-50 border border-rose-200 rounded text-[12px] p-2 mb-3 whitespace-pre-wrap"
+                 x-text="lastEventMessage()"></pre>
+            <div class="flex items-center gap-3" x-show="isMockPr()">
+              <button class="btn btn-ghost" @click="openPrModal()">🔀 Open PR (artefacts + AI review)</button>
+            </div>
+          </div>
+
+          <!-- 8. BLOCKED on PR approval (legacy GitHub flow) -->
+          <div class="card" x-show="!isGenie && selected.final_status === 'blocked_on_pr_approval'"
+               style="border-color: #F3B6BE; background: #FEF5F6;">
+            <h3 class="text-rose-800">⛔ Staging deploy blocked — PR not yet approved on GitHub</h3>
+            <pre class="bg-rose-50 border border-rose-200 rounded text-[12px] p-2 mb-3 mt-2 whitespace-pre-wrap"
+                 x-text="latestApprovalGateMessage()"></pre>
+            <div class="flex items-center gap-3">
+              <button class="btn btn-primary" @click="retryProdDeploy()" x-show="!isExample">🔁 Re-check PR approval &amp; deploy to staging</button>
+              <span x-show="reviewResult" class="text-sm" x-text="reviewResult"></span>
+            </div>
+          </div>
+
+          <!-- 9. VERTICAL AGENT TIMELINE (visible once initiated) -->
+          <div class="card" x-show="!isQueued()">
+            <div class="flex items-center justify-between mb-3">
+              <h3>Agent flow</h3>
+              <span class="text-[11px] text-slate-500" x-text="events.length + ' events'"></span>
+            </div>
+            <div class="space-y-0">
+              <template x-for="(node, idx) in AGENT_NODES" :key="node">
+                <div class="vlane">
+                  <div class="vlane-left">
+                    <div class="vlane-dot" :class="stageKind(node) === 'running' ? 'in_progress' : stageKind(node)"></div>
+                    <template x-if="idx < AGENT_NODES.length - 1">
+                      <div class="vlane-line" :class="stepStatus(node) === 'succeeded' ? 'done' : ''"></div>
+                    </template>
+                  </div>
+                  <div class="pb-3">
+                    <div class="vlane-card" :class="stepCardClass(node)">
+                      <div class="flex items-center justify-between gap-2">
+                        <div class="flex items-center gap-2">
+                          <span class="font-semibold text-[14px]" x-text="prettyName(node)"></span>
+                          <span class="pill" :class="'pill-' + stepStatus(node)"
+                                x-text="stageKind(node) === 'awaiting' ? 'awaiting approval' : stepStatus(node)"></span>
+                          <span x-show="stageKind(node) === 'running'" class="ops-spinner"></span>
+                        </div>
+                        <button class="text-[11px] text-slate-500 hover:text-slate-800"
+                                @click="toggleExpand(node)"
+                                x-text="expanded[node] ? 'collapse' : (stepEvents(node).length > 2 ? 'expand (' + stepEvents(node).length + ')' : '')"></button>
+                      </div>
+                      <!-- Events: show first 2 collapsed, or all expanded -->
+                      <div class="mt-2 space-y-0">
+                        <template x-for="(ev, i) in displayedEvents(node)" :key="ev.seq || i">
+                          <div class="step-event" :class="ev._kind || ev.status">
+                            <div class="flex items-center gap-2 text-[10px] text-slate-500">
+                              <span class="pill" :class="'pill-' + ev.status" x-text="ev._kind === 'human_comment' ? 'comment' : ev.status"></span>
+                              <span x-text="(ev.timestamp || '').toString().slice(11,19)"></span>
+                            </div>
+                            <div class="mt-0.5" x-text="ev.message"></div>
+                            <a x-show="evLink(ev)" :href="evLink(ev)" target="_blank"
+                               class="text-[11px] text-amber-700 hover:underline" x-text="evLinkLabel(ev)"></a>
+                          </div>
+                        </template>
+                        <div x-show="stepEvents(node).length === 0" class="text-[12px] text-slate-400 italic py-1">
+                          (no events yet)
+                        </div>
+                      </div>
+                      <!-- Per-step comment + re-run -->
+                      <div class="mt-2 pt-2 border-t border-slate-100">
+                        <textarea class="tf text-[12px]" rows="1"
+                                  x-model="commentDrafts[node]"
+                                  :placeholder="'Add a comment to ' + prettyName(node) + ' — the agent will incorporate it on re-run'"></textarea>
+                        <div class="mt-1.5 flex items-center gap-2">
+                          <button class="btn btn-ghost text-[12px] py-1 px-2"
+                                  :disabled="!commentDrafts[node] || !commentDrafts[node].trim()"
+                                  @click="saveComment(node)">💬 Save comment</button>
+                          <button class="btn btn-ghost text-[12px] py-1 px-2"
+                                  @click="rerunFromStep(node)"
+                                  :disabled="rerunBusy[node]"
+                                  x-text="rerunBusy[node] ? '…' : '🔁 Re-run from this step'"></button>
+                          <span x-show="commentSaved[node]" class="text-[11px] text-emerald-700"
+                                x-text="commentSaved[node]"></span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- IN-APP PR PREVIEW MODAL (mock PR — no external Git) -->
+          <div x-show="prModalOpen" x-cloak
+               style="position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:50; display:flex; align-items:flex-start; justify-content:center; overflow:auto; padding:3rem 1rem;"
+               @click.self="closePrModal()">
+            <div class="card" style="max-width:920px; width:100%; max-height:85vh; overflow:auto;">
+              <div class="flex items-start justify-between gap-3 mb-2">
+                <div>
+                  <h3 class="mb-0">🔀 Pull request preview
+                    <span class="text-slate-400" x-text="mockPr ? ('#' + mockPr.number) : ''"></span></h3>
+                  <div class="text-[11px] text-slate-500">
+                    Branch <code x-text="mockPr && mockPr.branch"></code> ·
+                    <span x-text="mockPr && mockPr.file_count"></span> generated file(s).
+                  </div>
+                </div>
+                <button class="btn btn-ghost text-[12px] py-1 px-2" @click="closePrModal()">✕ Close</button>
+              </div>
+              <div x-show="mockPr">
+                <div class="font-semibold text-[14px] text-slate-800" x-text="mockPr && mockPr.title"></div>
+                <pre class="bg-slate-50 border border-slate-200 rounded text-[12px] p-2 mt-1 whitespace-pre-wrap"
+                     x-text="mockPr && mockPr.body"></pre>
+
+                <!-- ACME artefacts: metric view, Genie Agent, dashboard, DQ rules -->
+                <template x-if="prArtifacts">
+                  <div class="space-y-3 mt-3">
+                    <div x-show="prArtifacts.metric_view">
+                      <h4 class="mb-1 text-[13px] font-semibold">📐 Metric view · <code class="text-[12px]" x-text="prArtifacts.metric_view.name"></code>
+                        <a :href="prArtifacts.metric_view.url" target="_blank" class="text-[11px] ml-2 underline">open ↗</a></h4>
+                      <div class="text-[12px] text-slate-600">Measures (each has a comment):
+                        <span x-text="(prArtifacts.metric_view.measures || []).map(m => m.name + (m.comment ? '' : ' (NO COMMENT)')).join(' · ')"></span></div>
+                    </div>
+                    <div x-show="prArtifacts.agent">
+                      <h4 class="mb-1 text-[13px] font-semibold">🧞 Genie Agent · <span x-text="prArtifacts.agent.title"></span>
+                        <a :href="prArtifacts.agent.url" target="_blank" class="text-[11px] ml-2 underline">open ↗</a></h4>
+                      <div class="text-[12px] text-slate-600">Data sources: <span x-text="(prArtifacts.agent.data_sources || []).join(', ')"></span></div>
+                      <div class="text-[12px] text-slate-600 mt-1">Sample questions:
+                        <ul class="list-disc ml-5"><template x-for="q in (prArtifacts.agent.sample_questions || [])" :key="q"><li x-text="q"></li></template></ul></div>
+                      <div class="text-[12px] text-slate-600 mt-1">Benchmarks:
+                        <ul class="list-disc ml-5"><template x-for="b in (prArtifacts.agent.benchmarks || [])" :key="b.question"><li><span x-text="b.question"></span> → <span class="text-slate-500" x-text="b.expected"></span><div class="text-[11px] font-mono text-slate-500 whitespace-pre-wrap" x-show="b.sql" x-text="b.sql"></div></li></template></ul></div>
+                    </div>
+                    <div x-show="prArtifacts.dashboard">
+                      <h4 class="mb-1 text-[13px] font-semibold">📊 Dashboard · <span x-text="prArtifacts.dashboard.title"></span>
+                        <a :href="prArtifacts.dashboard.url" target="_blank" class="text-[11px] ml-2 underline">open ↗</a></h4>
+                      <div class="text-[12px] text-slate-600">Pages: <span x-text="(prArtifacts.dashboard.pages || []).map(p => p.page).join(' · ')"></span>
+                        · datasets: <span x-text="(prArtifacts.dashboard.datasets || []).length"></span>, none with customer names</div>
+                    </div>
+                    <div>
+                      <h4 class="mb-1 text-[13px] font-semibold">🧹 DQ rules (<span x-text="(prArtifacts.dq || []).length"></span>, checked against cfo_workbench)</h4>
+                      <table class="bench-table">
+                        <thead><tr><th>Table</th><th>Rule</th><th>Severity</th><th>Origin</th><th>Violations</th><th>Status</th></tr></thead>
+                        <tbody>
+                          <template x-for="r in (prArtifacts.dq || [])" :key="r.table_name + r.rule_name">
+                            <tr>
+                              <td><code x-text="r.table_name"></code></td>
+                              <td x-text="r.rule_name"></td>
+                              <td x-text="r.severity"></td>
+                              <td x-text="r.origin"></td>
+                              <td x-text="r.violations === null || r.violations === undefined ? '-' : r.violations"></td>
+                              <td x-text="r.status === 'would_drop' ? 'would drop rows' : r.status"></td>
+                            </tr>
+                          </template>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- ACME checklist -->
+                <template x-if="prChecklist().length">
+                  <div class="mt-3">
+                    <h4 class="mb-1 text-[13px] font-semibold">✅ Review checklist</h4>
+                    <template x-for="c in prChecklist()" :key="c.name">
+                      <div class="checklist-row">
+                        <span class="pill" :class="c.pass ? 'pill-succeeded' : 'pill-failed'" x-text="c.pass ? 'pass' : 'change'"></span>
+                        <span class="font-semibold" x-text="c.name"></span>
+                        <span class="text-slate-500" x-text="' — ' + c.detail"></span>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+
+                <!-- AI review rounds -->
+                <h4 class="mt-3 mb-1 text-[13px] font-semibold" style="color:var(--dbx-navy-2);">
+                  🤖 Automated review (<span x-text="prReviews.length"></span> round<span x-show="prReviews.length!==1">s</span>)</h4>
+                <div x-show="!prReviews.length" class="text-[12px] text-slate-500 italic">No review comments yet.</div>
+                <div class="space-y-2">
+                  <template x-for="r in prReviews" :key="r.round">
+                    <div class="confluence-preview" style="border:1px solid var(--border); border-radius:.5rem; padding:.6rem .8rem;">
+                      <div class="text-[11px] text-slate-500 mb-1">Round <span x-text="r.round"></span> · verdict
+                        <span class="pill" :class="r.verdict==='approve' ? 'pill-succeeded' : 'pill-in_progress'" x-text="r.verdict"></span></div>
+                      <div class="text-[12.5px]" x-html="mdToHtml(r.comment_md)"></div>
+                    </div>
+                  </template>
+                </div>
+
+                <!-- Acme decision from the PR view -->
+                <div x-show="isGenie && statusKey() === 'pending_review'" class="flex flex-wrap items-center gap-3 mt-4 pt-3 border-t border-slate-200">
+                  <button class="btn btn-primary" @click="approve(); closePrModal()"
+                          x-text="aiReview && aiReview.verdict === 'request_changes' ? 'Approve anyway → promote' : 'Approve → promote to prod'"></button>
+                  <input class="tf" style="width:auto; min-width:14rem;" x-model="rejectNote" placeholder="Reason (optional)">
+                  <button class="btn btn-ghost" @click="reject(); closePrModal()">❌ Reject</button>
+                </div>
+
+                <!-- Generated files -->
+                <h4 class="mt-3 mb-1 text-[13px] font-semibold">📄 Generated files</h4>
+                <template x-for="(content, path) in (mockPr ? mockPr.files : {})" :key="path">
+                  <details class="mb-1">
+                    <summary class="text-[12px] font-mono cursor-pointer" x-text="path"></summary>
+                    <pre class="bg-slate-50 border border-slate-200 rounded text-[11px] p-2 mt-1 overflow-auto" x-text="content"></pre>
+                  </details>
+                </template>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </template>
+
+    </section>
+  </div>
+
+</div>
+
+<script src="/static/tracker.js"></script>
+{% endblock %}

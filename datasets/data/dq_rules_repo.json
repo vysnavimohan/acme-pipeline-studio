@@ -1,0 +1,102 @@
+[
+  {
+    "table_name": "silver_ar_transaction",
+    "rule_name": "invoice_id not null",
+    "constraint_sql": "invoice_id IS NOT NULL",
+    "severity": "drop",
+    "origin": "existing",
+    "enabled": "true",
+    "why": "business key of the AR invoice",
+    "owner": "data-engineering"
+  },
+  {
+    "table_name": "silver_ar_transaction",
+    "rule_name": "open balance non-negative",
+    "constraint_sql": "open_balance_usd >= 0",
+    "severity": "warn",
+    "origin": "existing",
+    "enabled": "true",
+    "why": "an open balance cant be negative",
+    "owner": "data-engineering"
+  },
+  {
+    "table_name": "silver_customer_hist",
+    "rule_name": "customer_id not null",
+    "constraint_sql": "customer_id IS NOT NULL",
+    "severity": "drop",
+    "origin": "existing",
+    "enabled": "true",
+    "why": "business key of the customer history",
+    "owner": "data-engineering"
+  },
+  {
+    "table_name": "silver_inventory_on_hand",
+    "rule_name": "branch and product not null",
+    "constraint_sql": "branch_id IS NOT NULL AND product_id IS NOT NULL",
+    "severity": "drop",
+    "origin": "existing",
+    "enabled": "true",
+    "why": "grain of the snapshot",
+    "owner": "data-engineering"
+  },
+  {
+    "table_name": "silver_inventory_on_hand",
+    "rule_name": "quantity non-negative",
+    "constraint_sql": "quantity_on_hand >= 0",
+    "severity": "warn",
+    "origin": "existing",
+    "enabled": "true",
+    "why": "stock cant be negative",
+    "owner": "data-engineering"
+  },
+  {
+    "table_name": "silver_sales_invoice_line",
+    "rule_name": "branch_id not null",
+    "constraint_sql": "branch_id IS NOT NULL",
+    "severity": "drop",
+    "origin": "existing",
+    "enabled": "true",
+    "why": "branch is the grain of the margin view",
+    "owner": "data-engineering"
+  },
+  {
+    "table_name": "silver_sales_invoice_line",
+    "rule_name": "invoice_id not null",
+    "constraint_sql": "invoice_id IS NOT NULL",
+    "severity": "drop",
+    "origin": "existing",
+    "enabled": "true",
+    "why": "business key of the invoice line",
+    "owner": "data-engineering"
+  },
+  {
+    "table_name": "silver_sales_invoice_line",
+    "rule_name": "line_no not null",
+    "constraint_sql": "line_no IS NOT NULL",
+    "severity": "drop",
+    "origin": "existing",
+    "enabled": "true",
+    "why": "second half of the invoice-line key",
+    "owner": "data-engineering"
+  },
+  {
+    "table_name": "silver_sales_invoice_line",
+    "rule_name": "net revenue present",
+    "constraint_sql": "net_revenue_usd IS NOT NULL",
+    "severity": "warn",
+    "origin": "existing",
+    "enabled": "true",
+    "why": "margin maths needs net revenue",
+    "owner": "data-engineering"
+  },
+  {
+    "table_name": "silver_sales_invoice_line",
+    "rule_name": "unit_price non-negative",
+    "constraint_sql": "list_unit_price_usd >= 0",
+    "severity": "drop",
+    "origin": "existing",
+    "enabled": "true",
+    "why": "list prices are never negative (credit-note lines may be, see G7)",
+    "owner": "data-engineering"
+  }
+]

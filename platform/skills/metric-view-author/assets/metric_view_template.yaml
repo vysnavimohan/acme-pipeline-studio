@@ -1,0 +1,66 @@
+# Your company: vmohan_demo_catalog.cfo_workbench.mv_revenue_margin (synthetic data for the show-and-tell).
+# Deploy with the bundle-managed SQL job:
+#   CREATE OR REPLACE VIEW vmohan_demo_catalog.cfo_workbench.mv_revenue_margin WITH METRICS LANGUAGE YAML AS $$
+#   <this file>
+#   $$
+# Then certify in Catalog Explorer. Requires Databricks Runtime 17.2+ (version 1.1).
+version: 1.1
+source: vmohan_demo_catalog.cfo_workbench.gold_fct_sales_line
+comment: "Revenue, cost of sales and gross margin by order date, branch, product category and customer. Grain: one row per sales order line (ACTUAL) or per branch x category x month (PLAN, same table, scenario = PLAN). AUD. Owner: Finance Systems Lead."
+joins:
+  - name: dim_branch
+    source: vmohan_demo_catalog.cfo_workbench.gold_dim_branch
+    'on': source.branch_key = dim_branch.branch_key
+  - name: dim_product
+    source: vmohan_demo_catalog.cfo_workbench.gold_dim_product
+    'on': source.product_key = dim_product.product_key
+  - name: dim_customer
+    source: vmohan_demo_catalog.cfo_workbench.gold_dim_customer
+    'on': source.customer_key = dim_customer.customer_key
+dimensions:
+  - name: Order Date
+    expr: source.order_date
+    comment: "Calendar date the sales order line was raised."
+  - name: Order Week
+    expr: "DATE_TRUNC('WEEK', source.order_date)"
+    comment: "Week (Monday start) of the order date."
+  - name: Order Month
+    expr: "DATE_TRUNC('MONTH', source.order_date)"
+    comment: "Calendar month of the order date."
+  - name: Branch
+    expr: dim_branch.branch_name
+    comment: "Branch that fulfilled the line."
+  - name: Product Category
+    expr: dim_product.category
+    comment: "Product category from the product dimension (for example Fasteners)."
+  - name: Customer Name
+    expr: dim_customer.customer_name
+    comment: "Trading name of the customer account."
+measures:
+  - name: Net Revenue
+    expr: SUM(source.net_amount) FILTER (WHERE source.scenario = 'ACTUAL')
+    comment: "Net sales after discounts, ACTUAL lines only. AUD."
+  - name: Cost of Sales
+    expr: SUM(source.cost_amount) FILTER (WHERE source.scenario = 'ACTUAL')
+    comment: "Standard cost of goods sold, ACTUAL lines only. AUD."
+  - name: Gross Margin
+    expr: "MEASURE(`Net Revenue`) - MEASURE(`Cost of Sales`)"
+    comment: "Net Revenue less Cost of Sales. AUD."
+  - name: Gross Margin Pct
+    expr: "MEASURE(`Gross Margin`) / NULLIF(MEASURE(`Net Revenue`), 0)"
+    comment: "Gross Margin divided by Net Revenue. Ratio of composed measures; re-aggregates at any grain."
+  - name: Plan Net Revenue
+    expr: SUM(source.net_amount) FILTER (WHERE source.scenario = 'PLAN')
+    comment: "Plan net revenue at the plan grain. AUD."
+  - name: Plan Cost of Sales
+    expr: SUM(source.cost_amount) FILTER (WHERE source.scenario = 'PLAN')
+    comment: "Plan cost of sales at the plan grain. AUD."
+  - name: Plan Gross Margin Pct
+    expr: "(MEASURE(`Plan Net Revenue`) - MEASURE(`Plan Cost of Sales`)) / NULLIF(MEASURE(`Plan Net Revenue`), 0)"
+    comment: "Plan gross margin percent."
+  - name: Gross Margin vs Plan Bps
+    expr: "(MEASURE(`Gross Margin Pct`) - MEASURE(`Plan Gross Margin Pct`)) * 10000"
+    comment: "Actual gross margin percent minus plan, in basis points. Negative means below plan."
+  - name: Discount Leakage
+    expr: SUM(source.discount_amount) FILTER (WHERE source.scenario = 'ACTUAL')
+    comment: "Discount value given on ACTUAL lines. Used to find margin leakage by category and account. AUD."
